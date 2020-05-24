@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dgl.nn.pytorch import EdgeConv
-from dgl.transform import knn_graph
 import etw_pytorch_utils as pt_utils
 from collections import namedtuple
 from pointnet2.utils import pointnet2_utils
+from pointnet2.utils.pointnet2_modules import PointnetFPModule
+from pointnet2.utils.pointnet2_modules import PointnetSAModuleMSGIndex as PointnetSAModuleMSG
 from ..utils import GatherPoints
 
 
@@ -24,9 +24,10 @@ class Pointnet2MSG(nn.Module):
             Whether or not to use the xyz position of a point as a feature
     """
 
-    def __init__(self, input_channels=0, use_xyz=True):
+    def __init__(self, config, input_channels=0, use_xyz=True):
         super(Pointnet2MSG, self).__init__()
 
+        self.config = config
         self.SA_modules = nn.ModuleList()
         c_in = input_channels
         self.SA_modules.append(
@@ -55,36 +56,15 @@ class Pointnet2MSG(nn.Module):
             PointnetSAModuleMSG(
                 radii=[0.10, 0.15],
                 nsamples=[16, 32],
-                mlps=[[c_in, 128, 196, 256], [c_in, 128, 196, 256]],
+                mlps=[[c_in, 128, 256, 512], [c_in, 128, 256, 512]],
                 use_xyz=use_xyz,
             )
         )
-        c_out_2 = 256 + 256
-
-        c_in = c_out_2
-        self.SA_modules.append(
-            PointnetSAModuleMSG(
-                radii=[0.12, 0.30],
-                nsamples=[16, 32],
-                mlps=[[c_in, 256, 256, 512], [c_in, 256, 384, 512]],
-                use_xyz=use_xyz,
-            )
-        )
-        c_out_3 = 512 + 512
-
-        self.FP_modules = nn.ModuleList()
-        #self.FP_modules.append(PointnetFPModule(mlp=[256 + input_channels, 128, 128]))
-        #self.FP_modules.append(PointnetFPModule(mlp=[512 + c_out_0, 256, 256]))
-        self.FP_modules.append(PointnetFPModule(mlp=[512 + c_out_1, 512, 512]))
-        self.FP_modules.append(PointnetFPModule(mlp=[c_out_3 + c_out_2, 512, 512]))
+        c_out_2 = 512 + 512
 
         self.FC_layer = (
-            #pt_utils.Seq(128)
-            pt_utils.Seq(512)
-            .conv1d(1024, bn=True)
-            .dropout()
-            .conv1d(config['n_pitch']*config['n_yaw']*8, activation=None)
-            #.conv1d(num_classes, activation=None)
+            pt_utils.Seq(c_out_2)
+            .conv1d(config['n_pitch'] * config['n_yaw'] * 8, activation=None)
         )
 
     def _break_up_pc(self, pc):
@@ -107,21 +87,13 @@ class Pointnet2MSG(nn.Module):
         """
         xyz, features = self._break_up_pc(pointcloud)
 
-        l_xyz, l_features = [xyz], [features]
+        l_xyz, l_feature = xyz, features
         for i in range(len(self.SA_modules)):
-            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i], indices[i])
-            l_xyz.append(li_xyz)
-            l_features.append(li_features)
+            l_xyz, l_feature = self.SA_modules[i](l_xyz, l_feature, indices[i])
 
-        for i in range(-1, -(len(self.FP_modules) + 1), -1):
-            l_features[i - 1] = self.FP_modules[i](
-                l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
-            )
-
-        x = self.FC_layer(l_features[2]).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8)
-        x = x.view(x.size(0), x.size(1), config['n_pitch'], config['n_yaw'], 8)
-
-        # featurefeature_volume_batch shape: (B, M, #pitch, #yaw, 8): -> logit, xyz(3), roll(2), residual(2)
+        x = l_feature
+        x = self.FC_layer(x).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8)
+        x = x.view(x.size(0), x.size(1), self.config['n_pitch'], self.config['n_yaw'], 8)
 
         accum = x[...,0:1] # linear
         xyz   = torch.sigmoid(x[...,1:4])

@@ -16,6 +16,7 @@ from torch.utils.data import Dataset, DataLoader
 import copy
 from itertools import islice, chain
 import pickle
+from .utils import *
 
 
 class GraspDataset(Dataset):

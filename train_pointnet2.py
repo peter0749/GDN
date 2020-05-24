@@ -14,12 +14,12 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 torch.backends.cudnn.benchmark = True
 
-from model.settings.edgeconv import config
+from model.settings.pointnet2 import config
 from model.representation.euler import *
 from model.utils import *
 from model.dataset import *
-from model.detector.edgeconv.backbone import *
-from model.detector.edgeconv.loss import *
+from model.detector.pointnet2.backbone import *
+from model.detector.pointnet2.loss import *
 from model.detector.utils import *
 
 
@@ -50,7 +50,7 @@ if __name__ == '__main__':
                             shuffle=True,
                             collate_fn=my_collate_fn)
 
-    base_model = EdgeDet(config).cuda()
+    base_model = Pointnet2MSG(config).cuda()
     print('Num trainable params: %d'%count_parameters(base_model))
     #model = base_model
     model = nn.DataParallel(base_model)
