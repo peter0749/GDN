@@ -1,3 +1,5 @@
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from dgl.nn.pytorch import EdgeConv
 from dgl.transform import knn_graph
