@@ -52,8 +52,8 @@ if __name__ == '__main__':
 
     base_model = Pointnet2MSG(config).cuda()
     print('Num trainable params: %d'%count_parameters(base_model))
-    #model = base_model
-    model = nn.DataParallel(base_model)
+    model = base_model
+    #model = nn.DataParallel(base_model)
     multi_task_loss = MultiTaskLossWrapper(config)
     for param in multi_task_loss.parameters():
         param.requires_grad = False

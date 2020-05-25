@@ -2,7 +2,7 @@ config = dict(
     full_view = True,
     max_view = 5,
     min_view = 5, # if min_view == max_view: static fusion
-    logdir='./grasp_logs/edgeconv_direct_loss_fullview_static_5_view_fast',
+    logdir='/tmp3/peter0749/GDN/grasp_logs/pointnet2_direct_loss_fullview_static_5_view_fast',
     representation = 'euler',
     base_loss = 'focal_l1',
     focal_alpha = 0.25,
@@ -11,7 +11,7 @@ config = dict(
     learning_rate = 0.001,
     grasp_path = '/tmp3/peter0749/GraspDataset/YCB/grasp_labels_npy_nms/good_grasps',
     point_cloud_path = '/tmp3/peter0749/GraspDataset/YCB/all',
-    #pretrain_path = '',
+    pretrain_path = '/tmp3/peter0749/GDN/grasp_logs/edgeconv_direct_loss_fullview_static_5_view_fast/ckpt/w-31.pth',
     hand_height = 0.11, # 11cm (x range)
     gripper_width = 0.08, # 8cm (y range)
     thickness_side = 0.01, # (z range)

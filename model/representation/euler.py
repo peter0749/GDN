@@ -1,5 +1,5 @@
 from .baseclass import AbstractRepresentation
-from ..utils import rotation_euler, hand_match
+from ..utils import rotation_euler, hand_match, generate_gripper_edge, crop_index
 import numpy as np
 import numba as nb
 from scipy.spatial.transform import Rotation
