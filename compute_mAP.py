@@ -15,6 +15,9 @@ from pykdtree.kdtree import KDTree
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+
+from model.utils import *
+
 from argparse import ArgumentParser
 
 warnings.filterwarnings('ignore', category=nb.NumbaPendingDeprecationWarning)
@@ -26,49 +29,6 @@ config = dict(
     thickness_side = 0.01, # (z range)
     thickness = 0.01, # gripper_width + thickness*2 = hand_outer_diameter (0.08+0.01*2 = 0.1)
 )
-
-def generate_gripper_edge(width, hand_height, gripper_pose_wrt_mass_center, thickness, backward=0.0):
-    pad = np.array([[0.,0.,0.,1.]]*4, dtype=np.float32)
-    gripper_r = np.array([0.,1.,0.], dtype=np.float32)*width/2.
-    gripper_l = -gripper_r
-    gripper_l_t = gripper_l + np.array([hand_height,0.,0.], dtype=np.float32)
-    gripper_r_t = gripper_r + np.array([hand_height,0.,0.], dtype=np.float32)
-    gripper_r[0] -= backward
-    gripper_l[0] -= backward
-    thickness_d = np.array([0., 0., thickness/2.], dtype=np.float32).reshape(1, 3)
-
-    gripper = np.stack( (gripper_l, gripper_r, gripper_l_t, gripper_r_t) ) # (4, 3)
-    gripper_outer1 = gripper - thickness_d
-    gripper_outer2 = gripper + thickness_d
-
-    # gripper = np.pad(gripper, ((0,0), (0,1)), mode='constant', constant_values=1)
-    pad[:,:3] = gripper
-    gripper = np.dot(gripper_pose_wrt_mass_center, pad.T).T
-
-    pad[:,:3] = gripper_outer1
-    gripper_outer1 = np.dot(gripper_pose_wrt_mass_center, pad.T).T
-
-    pad[:,:3] = gripper_outer2
-    gripper_outer2 = np.dot(gripper_pose_wrt_mass_center, pad.T).T
-
-    return gripper, gripper_outer1, gripper_outer2
-
-
-@nb.jit(nopython=True, nogil=True)
-def hand_match(pred, target, rot_th=5, trans_th=0.02):
-    # pred: (3, 4)
-    # target: (3, 4)
-    rot_th_rad = np.radians(rot_th)
-    trans_matched = np.linalg.norm(pred[:,3]-target[:,3], ord=2) < trans_th
-    rot_diff = np.arcsin(np.linalg.norm( np.eye(3) - np.dot(pred[:3,:3], target[:3,:3].T), ord=None  ) / (2*np.sqrt(2)))
-    rot_matched = rot_diff < rot_th_rad
-    return rot_matched and trans_matched
-
-@nb.jit(nopython=True, nogil=True)
-def rot_match(pred, target, th=5):
-    rot_th_rad = np.radians(th)
-    rot_diff = np.arcsin(np.linalg.norm( np.eye(3) - np.dot(pred[:3,:3], target[:3,:3].T), ord=None  ) / (2*np.sqrt(2)))
-    return rot_diff < rot_th_rad
 
 def compute_match(ps, ts, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02):
     ts_kd_tree = {k: KDTree(np.asarray(v)[:,:,3]) for (k, v) in ts.items() } # KD-tree for each object
@@ -125,6 +85,7 @@ if __name__ == '__main__':
     parser.add_argument("gt", type=str, help="Ground truth prefix")
     parser.add_argument("pred", type=str, help="Prediction prefix")
     parser.add_argument("gt_suffix", type=str, help="Suffix of the GT [_nms.npy]")
+    parser.add_argument("output", type=str, help="Output file in JSON format")
     parser.add_argument("--pc_path", type=str, default="", help="Point cloud path for visualization")
     parser.add_argument("--top_K", type=int, default=10, help="Top-K for AP computation [10]")
     args = parser.parse_args()
@@ -132,6 +93,7 @@ if __name__ == '__main__':
     gt_prefix = args.gt
     pred_prefix = args.pred
     suffix = args.gt_suffix
+    output = args.output
     pc_prefix = None
     if os.path.exists(args.pc_path):
         from mayavi import mlab
@@ -186,5 +148,5 @@ if __name__ == '__main__':
         print(msg)
     for rot_th in thresholds:
         print('mAP@%d: %.4f'%(rot_th, APs_at_threshold[rot_th]))
-    with open('eval.json', 'w') as fp:
+    with open(output, 'w') as fp:
         fp.write(json.dumps({'overall': APs_at_threshold, 'object': APs_for_obj}))
