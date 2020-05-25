@@ -45,7 +45,8 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
     pretrain = sys.argv[1]
     pc_path = sys.argv[2]
-    output_dir = sys.argv[3]
+    n_proposal = int(sys.argv[3])
+    n_iteration = int(sys.argv[4])
 
     config['point_cloud_path'] = pc_path
 

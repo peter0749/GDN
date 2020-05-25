@@ -1,0 +1,11 @@
+pointnet2:
+model   nms     inf     eps     ave
+0.0647  0.1566  0.2213  14.1622 0.2213
+
+edgeconv:
+model   nms     inf     eps     ave
+0.0654  0.1778  0.2432  15.5657 0.2432
+
+pointnetgpd:
+model   nms     inf     eps     ave
+2.7018  0.0916  2.7934  83.8053 2.7935
