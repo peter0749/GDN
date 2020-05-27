@@ -1,5 +1,5 @@
-from .baseclass import AbstractRepresentation
-from ..utils import rotation_euler, hand_match, generate_gripper_edge, crop_index
+from ..baseclass import AbstractRepresentation
+from ...utils import rotation_euler, hand_match, generate_gripper_edge, crop_index
 import numpy as np
 import numba as nb
 from scipy.spatial.transform import Rotation
@@ -137,6 +137,7 @@ class EulerRepresentation(AbstractRepresentation):
                 del poses[i]
                 continue
         return poses
+
 
 @nb.njit
 def retrive_from_feature_volume(pts, feature, M, n_pitch, n_yaw, hand_height, gripper_width, thickness_side, rot_th, trans_th, n_output=10, threshold=0.0, nms=False):

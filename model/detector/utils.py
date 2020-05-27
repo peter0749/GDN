@@ -3,6 +3,16 @@ import torch.nn as nn
 from pointnet2.utils import pointnet2_utils
 
 
+def freeze_model(m):
+    for param in m.parameters():
+        param.requires_grad = False
+
+
+def unfreeze_model(m):
+    for param in m.parameters():
+        param.requires_grad = True
+
+
 class GatherPoints(nn.Module):
     def __init__(self):
         super(GatherPoints, self).__init__()

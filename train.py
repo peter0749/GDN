@@ -14,14 +14,18 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 torch.backends.cudnn.benchmark = True
 
-from model.settings.edgeconv import config
-from model.representation.euler import *
 from model.utils import *
-from model.dataset import *
-from model.detector.edgeconv.backbone import *
-from model.detector.edgeconv.loss import *
 from model.detector.utils import *
+from model import import_model_by_setting
+import importlib
+import copy
+from argparse import ArgumentParser
 
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument("config", type=str, help="Path to configuration file (in JSON)")
+    args = parser.parse_args()
+    return args
 
 if __name__ == '__main__':
     # In[14]:
@@ -29,19 +33,16 @@ if __name__ == '__main__':
     mp.set_start_method('spawn', force=True)
     #mp.set_start_method('forkserver', force=True)
 
+    args = parse_args()
+
+    with open(args.config, 'r') as fp:
+        config = json.load(fp)
+
     if not os.path.exists(config['logdir']+'/ckpt'):
         os.makedirs(config['logdir']+'/ckpt')
 
-    representation = EulerRepresentation(config)
-
-
-    # In[15]:
-
-
-    dataset = GraspDataset(config)
+    representation, dataset, my_collate_fn, base_model, model, optimizer, loss_function = import_model_by_setting(config)
     dataset.train()
-
-    my_collate_fn = collate_fn_setup(config, representation)
     my_collate_fn.train()
     dataloader = DataLoader(dataset,
                             batch_size=config['batch_size'],
@@ -50,19 +51,7 @@ if __name__ == '__main__':
                             shuffle=True,
                             collate_fn=my_collate_fn)
 
-    base_model = EdgeDet(config).cuda()
     print('Num trainable params: %d'%count_parameters(base_model))
-    #model = base_model
-    model = nn.DataParallel(base_model)
-    multi_task_loss = MultiTaskLossWrapper(config)
-    for param in multi_task_loss.parameters():
-        param.requires_grad = False
-    #optimizer = optim.Adam(chain(model.parameters(), multi_task_loss.parameters()), lr=config['learning_rate'])
-    optimizer = optim.Adam(model.parameters(), lr=config['learning_rate'])
-
-
-    # In[ ]:
-
 
     epochs = config['epochs']
     start_epoch = 1
@@ -75,7 +64,8 @@ if __name__ == '__main__':
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
         base_model.load_state_dict(states['base_model'])
-        multi_task_loss.load_state_dict(states['loss_state'])
+        if 'loss_state' in states and (not states['loss_state'] is None) and hasattr(loss_function, 'load_state_dict'):
+            loss_function.load_state_dict(states['loss_state'])
         best_tpr2 = states['best_tpr2']
         optimizer.load_state_dict(states['optimizer_state'])
         start_epoch = states['epoch'] + 1
@@ -107,7 +97,7 @@ if __name__ == '__main__':
             pred = model(pc.cuda(), [pt_idx.cuda() for pt_idx in indices])
             (loss, cls_loss,
                 x_loss, y_loss, z_loss,
-                rot_loss, ws, uncert) = multi_task_loss(pred, volume.cuda())
+                rot_loss, ws, uncert) = loss_function(pred, volume.cuda())
             loss.backward()
             optimizer.step()
             n_iter += 1
@@ -173,7 +163,7 @@ if __name__ == '__main__':
                     pred = model(pc.cuda(), [pt_idx.cuda() for pt_idx in indices])
                     (loss, cls_loss,
                         x_loss, y_loss, z_loss,
-                        rot_loss, ws, uncert) = multi_task_loss(pred, volume.cuda())
+                        rot_loss, ws, uncert) = loss_function(pred, volume.cuda())
                     n_iter += 1
                     loss_epoch += loss.item()
                     cls_loss_epoch += cls_loss
@@ -229,7 +219,7 @@ if __name__ == '__main__':
                     best_tpr2 = tpr_2
                     torch.save({
                         'base_model': base_model.state_dict(),
-                        'loss_state': multi_task_loss.state_dict(),
+                        'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                         'tpr_2': tpr_2,
                         'best_tpr2': best_tpr2,
                         'optimizer_state': optimizer.state_dict(),
@@ -237,7 +227,7 @@ if __name__ == '__main__':
                         }, config['logdir']+'/best.ckpt')
                 torch.save({
                     'base_model': base_model.state_dict(),
-                    'loss_state': multi_task_loss.state_dict(),
+                    'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                     'tpr_2': tpr_2,
                     'best_tpr2': best_tpr2,
                     'optimizer_state': optimizer.state_dict(),

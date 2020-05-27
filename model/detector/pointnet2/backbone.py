@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -24,7 +25,7 @@ class Pointnet2MSG(nn.Module):
             Whether or not to use the xyz position of a point as a feature
     """
 
-    def __init__(self, config, input_channels=0, use_xyz=True):
+    def __init__(self, config, input_channels=0, use_xyz=True, activation_layer=None):
         super(Pointnet2MSG, self).__init__()
 
         self.config = config
@@ -64,8 +65,9 @@ class Pointnet2MSG(nn.Module):
 
         self.FC_layer = (
             pt_utils.Seq(c_out_2)
-            .conv1d(config['n_pitch'] * config['n_yaw'] * 8, activation=None)
+            .conv1d(np.prod(config['output_dim']), activation=None)
         )
+        self.activation_layer = activation_layer
 
     def _break_up_pc(self, pc):
         xyz = pc[..., 0:3].contiguous()
@@ -93,12 +95,6 @@ class Pointnet2MSG(nn.Module):
 
         x = l_feature
         x = self.FC_layer(x).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8)
-        x = x.view(x.size(0), x.size(1), self.config['n_pitch'], self.config['n_yaw'], 8)
+        x = x.view(x.size(0), x.size(1), *self.config['output_dim'])
 
-        accum = x[...,0:1] # linear
-        xyz   = torch.sigmoid(x[...,1:4])
-        roll  = x[...,4:6]/(torch.norm(x[...,4:6], p=2, dim=-1, keepdim=True)+1e-8) # norm
-        pitch_residual = torch.sigmoid(x[...,6:7]) # 0~1
-        yaw_residual   = torch.sigmoid(x[...,7:8]) # 0~1
-
-        return torch.cat((accum, xyz, roll, pitch_residual, yaw_residual), -1)
+        return self.activation_layer(x)

@@ -78,7 +78,7 @@ class GraspDatasetGPD(object):
         super(GraspDatasetGPD, self).__init__(**kwargs)
         self.config = config
 
-        cloud_set = set(filter(lambda x: re.match(r'^[0-9]{3}(-|_)[0-9a-zA-Z]+.*$', x) and                               len(glob.glob(config['point_cloud_path']+'/'+x+'/clouds/*.npy'))>0
+        cloud_set = set(filter(lambda x: re.match(r'^[0-9]{3}(-|_)[0-9a-zA-Z]+.*$', x) and len(glob.glob(config['point_cloud_path']+'/'+x+'/clouds/*.npy'))>0
                     , os.listdir(config['point_cloud_path'])))
         self.object_set = list(cloud_set)
 
@@ -114,6 +114,9 @@ class GraspDatasetGPD(object):
         for obj in self.object_set_val:
             for pc in glob.glob(config['point_cloud_path']+'/'+obj+'/clouds/*.npy'):
                 self.val_data.append((obj,pc))
+
+        random.shuffle(self.train_data)
+        random.shuffle(self.val_data)
 
     def cal_projection(self, point_cloud_voxel, m_width_of_pic, margin, surface_normal, order, gripper_width):
         occupy_pic = np.zeros([m_width_of_pic, m_width_of_pic, 1])
