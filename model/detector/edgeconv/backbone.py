@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,7 +12,7 @@ from ..utils import GatherPoints
 
 class EdgeDet(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config, activation_layer=None):
         super(EdgeDet, self).__init__()
 
         self.config = config
@@ -39,8 +40,9 @@ class EdgeDet(nn.Module):
 
         self.FC_layer = (
             pt_utils.Seq(1024)
-            .conv1d(config['n_pitch'] * config['n_yaw'] * 8, activation=None)
+            .conv1d(np.prod(config['output_dim']), activation=None)
         )
+        self.activation_layer = activation_layer
 
     def forward(self, x, indices):
 
@@ -59,14 +61,6 @@ class EdgeDet(nn.Module):
 
         x = h
         x = self.FC_layer(x.transpose(1, 2).contiguous()).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8)
-        x = x.view(x.size(0), x.size(1), self.config['n_pitch'], self.config['n_yaw'], 8)
+        x = x.view(x.size(0), x.size(1), *self.config['output_dim'])
 
-        # featurefeature_volume_batch shape: (B, M, #pitch, #yaw, 8): -> logit, xyz(3), roll(2), residual(2)
-
-        accum = x[...,0:1] # linear
-        xyz   = torch.sigmoid(x[...,1:4])
-        roll  = x[...,4:6]/(torch.norm(x[...,4:6], p=2, dim=-1, keepdim=True)+1e-8) # norm
-        pitch_residual = torch.sigmoid(x[...,6:7]) # 0~1
-        yaw_residual   = torch.sigmoid(x[...,7:8]) # 0~1
-
-        return torch.cat((accum, xyz, roll, pitch_residual, yaw_residual), -1)
+        return self.activation_layer(x)
