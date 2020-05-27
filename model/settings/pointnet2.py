@@ -4,7 +4,7 @@ config = dict(
     min_view = 5, # if min_view == max_view: static fusion
     logdir='/tmp3/peter0749/GDN/grasp_logs/pointnet2_direct_loss_fullview_static_5_view_200e',
     representation = 'euler',
-    base_loss = 'focal_l1',
+    backbone = 'pointnet2',
     focal_alpha = 0.25,
     focal_gamma = 2.0,
     optimizer = 'adam',
@@ -36,6 +36,7 @@ config = dict(
     rot_th=5,
     trans_th=0.02,
     # Tune from multi task module with portion data
+    tune_task_weights=False,
     cls_w = 1.19,
     x_w = 6.3,
     y_w = 4.6,

@@ -1,4 +1,4 @@
-from ..utils import *
+from ...detector.utils import *
 
 
 def focal_loss(pp, yy, focal_alpha=0.25, focal_gamma=2.0, **kwargs):
