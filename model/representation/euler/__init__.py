@@ -1,3 +1,3 @@
 from .dataset import *
-from .feature_extractor import *
+from .representation import *
 from .loss import *

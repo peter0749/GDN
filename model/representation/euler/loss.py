@@ -109,7 +109,7 @@ class MultiTaskLossWrapper(nn.Module):
         weight = -torch.log(torch.FloatTensor([
             config['cls_w'], config['x_w'], config['y_w'], config['z_w'], config['rot_w']
         ]))
-        self.log_vars = nn.Parameter(weight.cuda())
+        self.log_vars = nn.Parameter(weight)
     def forward(self, outputs, targets):
         ws = torch.exp(-self.log_vars)
         (loss, cls_loss, x_loss, y_loss, z_loss,

@@ -1,6 +1,5 @@
 from ..baseclass import AbstractRepresentation
 from ...utils import rotation_euler, hand_match, generate_gripper_edge, crop_index
-from .loss import MultiTaskLossWrapper
 import numpy as np
 import numba as nb
 from scipy.spatial.transform import Rotation
@@ -14,7 +13,6 @@ class EulerRepresentation(AbstractRepresentation):
         self.roll_180 = np.array([[1,  0,  0],
                                   [0, -1,  0],
                                   [0,  0, -1]], dtype=np.float32)
-        self.loss_object = MultiTaskLossWrapper(config)
     def grasp_representation(self, pose, pts, pts_index):
         n_pitch, n_yaw = self.config['n_pitch'], self.config['n_yaw']
 
@@ -140,16 +138,6 @@ class EulerRepresentation(AbstractRepresentation):
                 continue
         return poses
 
-    def compute_loss(self, pred_feature, gt_feature):
-        return self.loss_object(pred_feature, gt_feature)
-
-    def freeze_loss_layer(self):
-        for param in self.loss_object.parameters():
-            param.requires_grad = False
-
-    def unfreeze_loss_layer(self):
-        for param in self.loss_object.parameters():
-            param.requires_grad = True
 
 @nb.njit
 def retrive_from_feature_volume(pts, feature, M, n_pitch, n_yaw, hand_height, gripper_width, thickness_side, rot_th, trans_th, n_output=10, threshold=0.0, nms=False):

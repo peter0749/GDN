@@ -16,7 +16,3 @@ class AbstractRepresentation(ABC):
     @abstractmethod
     def update_feature_volume(self, feature, index, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual):
         raise NotImplementedError('You call the abstract method?')
-
-    @abstractmethod
-    def compute_loss(self):
-        raise NotImplementedError('You call the abstract method?')
