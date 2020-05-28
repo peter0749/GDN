@@ -21,6 +21,21 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.euler import GraspDatasetVal, val_collate_fn_setup
             dataset = GraspDatasetVal(config)
             my_collate_fn = val_collate_fn_setup(config)
+    elif config['representation'] == 'euler_asymmetric_roll':
+        from ..representation.euler_asymmetric_roll import EulerRepresentation, MultiTaskLossWrapper
+        from ..representation.euler_asymmetric_roll.activation import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.euler_asymmetric_roll import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.euler_asymmetric_roll import GraspDatasetVal, val_collate_fn_setup
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = val_collate_fn_setup(config)
     elif config['representation'] == 'euler_regression':
         from ..representation.euler_regression import EulerRegressionRepresentation, MultiTaskLossWrapper
         from ..representation.euler_regression.activation import EulerRegressionActivation as ActivationLayer
