@@ -145,6 +145,7 @@ if __name__ == '__main__':
             fnr = 0.0
             spr = 0.0
             tpr_2 = 0.0
+            mean_mAP = 0.0
             n_pos = 0.0
             n_gt  = 0.0
             n_iter = 0
@@ -179,12 +180,13 @@ if __name__ == '__main__':
                                 threshold=config['eval_pred_threshold'],
                                 nms=False
                             )
-                    tp, fp, fn, sp, n_p, n_t = batch_metrics(pred_poses, gt_poses, **config)
+                    tp, fp, fn, sp, n_p, n_t, mAP = batch_metrics(pred_poses, gt_poses, **config)
                     tpr += tp
                     fpr += fp
                     fnr += fn
                     spr += sp
                     tpr_2 += (tp + sp)
+                    mean_mAP += mAP
                     n_pos += n_p
                     n_gt  += n_t
                     write_hwstat(config['logdir'])
@@ -193,6 +195,7 @@ if __name__ == '__main__':
                 tpr_2 = tpr_2 / max(1, n_pos)
                 fpr = fpr / max(1, n_pos)
                 fnr = fnr / max(1, n_gt)
+                mean_mAP /= n_iter
                 logger.add_scalar('eval/tpr', tpr, e)
                 logger.add_scalar('eval/tpr_2', tpr_2, e)
                 logger.add_scalar('eval/spr', spr, e)
@@ -201,6 +204,7 @@ if __name__ == '__main__':
                 logger.add_scalar('eval/f-1', 2 * tpr / (2 * tpr + fnr + fpr + 1e-8), e)
                 logger.add_scalar('eval/f-0.5', (1+0.5**2) * tpr / ((1+0.5**2) * tpr + 0.5**2 * fnr + fpr + 1e-8), e)
                 logger.add_scalar('eval/f-2', (1+2**2) * tpr / ((1+2**2) * tpr + 2**2 * fnr + fpr + 1e-8), e)
+                logger.add_scalar('eval/mean-mAP', mean_mAP, e)
 
                 loss_epoch /= n_iter
                 cls_loss_epoch /= n_iter
@@ -221,6 +225,7 @@ if __name__ == '__main__':
                         'base_model': base_model.state_dict(),
                         'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                         'tpr_2': tpr_2,
+                        'mAP': mean_mAP,
                         'best_tpr2': best_tpr2,
                         'optimizer_state': optimizer.state_dict(),
                         'epoch': e,
@@ -229,6 +234,7 @@ if __name__ == '__main__':
                     'base_model': base_model.state_dict(),
                     'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                     'tpr_2': tpr_2,
+                    'mAP': mean_mAP,
                     'best_tpr2': best_tpr2,
                     'optimizer_state': optimizer.state_dict(),
                     'epoch': e,
