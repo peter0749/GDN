@@ -173,7 +173,7 @@ class collate_fn_setup(object):
             pc_batch = pc_batch[:,:preserve_npts,:]
 
         network_indices = []
-        # featurefeature_volume_batch shape: (B, M, 7): -> logit, xyz(3), rpy(3)
+        # featurefeature_volume_batch shape: (B, M, 8): -> logit, xyz(3), roll(2), pitch(1), yaw(1)
         feature_volume_batch = []
 
         input_points = pc_batch.shape[1]
@@ -205,18 +205,17 @@ class collate_fn_setup(object):
                 new_ind = index_to_new_index(ind, reverse_index) # indices in subsampled points
                 if len(new_ind)==0:
                     continue
-                xyz, rpy = representation.grasp_representation(pose,
+                unique_grasp_value = representation.grasp_representation(pose,
                                pc_batch[b,output_index[b],:], # shape: (N', 3), subsampled
                                new_ind)
                 unique_grasp_key = tuple(new_ind)
-                unique_grasp_value = (xyz, rpy)
                 sample_dict[unique_grasp_key] = unique_grasp_value
                 if len(sample_dict)>=config['max_grasp_per_object']:
                     break
             feature_volume = np.zeros((config['subsample_levels'][config['output_layer']],
-                                       7), dtype=np.float32)
-            for n, (new_ind, (xyz, rpy)) in enumerate(sample_dict.items()):
-                representation.update_feature_volume(feature_volume, new_ind, xyz, rpy)
+                                       8), dtype=np.float32)
+            for n, (new_ind, (xyz, roll, pitch, yaw)) in enumerate(sample_dict.items()):
+                representation.update_feature_volume(feature_volume, new_ind, xyz, roll, pitch, yaw)
             feature_volume_batch.append(feature_volume)
             if len(pose_idx_pairs_batch[b])>0:
                 batch_gt_poses.append( next(zip(*pose_idx_pairs_batch[b]))  )

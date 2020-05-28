@@ -21,7 +21,7 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.euler import GraspDatasetVal, val_collate_fn_setup
             dataset = GraspDatasetVal(config)
             my_collate_fn = val_collate_fn_setup(config)
-    if config['representation'] == 'euler_regression':
+    elif config['representation'] == 'euler_regression':
         from ..representation.euler_regression import EulerRegressionRepresentation, MultiTaskLossWrapper
         from ..representation.euler_regression.activation import EulerRegressionActivation as ActivationLayer
         representation = EulerRegressionRepresentation(config)
@@ -34,6 +34,21 @@ def import_model_by_setting(config, mode='train'):
             my_collate_fn = collate_fn_setup(config, representation)
         else:
             from ..representation.euler_regression import GraspDatasetVal, val_collate_fn_setup
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = val_collate_fn_setup(config)
+    elif config['representation'] == 'euler_no_bin':
+        from ..representation.euler_no_bin import EulerNoBinRepresentation, MultiTaskLossWrapper
+        from ..representation.euler_no_bin.activation import EulerNoBinActivation as ActivationLayer
+        representation = EulerNoBinRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.euler_no_bin import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.euler_no_bin import GraspDatasetVal, val_collate_fn_setup
             dataset = GraspDatasetVal(config)
             my_collate_fn = val_collate_fn_setup(config)
     else:
