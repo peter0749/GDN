@@ -1,7 +1,6 @@
 # coding: utf-8
 
 import sys
-sys.path.append('../')
 import os
 import re
 import gc
@@ -287,6 +286,9 @@ if __name__ == '__main__':
     if method == 'GPD':
         dataset = GraspDatasetGPDVal(config, projection=True, project_chann=3, project_size=60, max_candidate=max_candidate)
         model = GPDClassifier(3)
+    elif method == 'GPD12':
+        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=12, project_size=60, max_candidate=max_candidate)
+        model = GPDClassifier(12)
     elif method == 'PointNetGPD':
         dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=2)
