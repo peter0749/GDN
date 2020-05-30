@@ -101,6 +101,13 @@ class GraspDataset(Dataset):
             vertices = vertices[idx]
         np.random.shuffle(vertices)
 
+        # Check if model support the number of points
+        while len(vertices)<config["subsample_levels"][0]:
+            # Too few points. Just replicate points to match model input shape.
+            idx = np.random.choice(len(vertices), min(len(vertices), config["subsample_levels"][0]-len(vertices)), replace=False)
+            add_points = vertices[idx] + np.random.randn(len(idx), 3) * 0.5 * 0.001
+            vertices = np.unique(np.append(vertices, add_points, axis=0), axis=0)
+
         use_aug = self.use_aug and np.random.rand()<0.5
 
         if use_aug:
@@ -277,6 +284,13 @@ class GraspDatasetVal(Dataset):
             idx = np.random.choice(len(vertices), config['input_points'], replace=False)
             vertices = vertices[idx]
         np.random.shuffle(vertices)
+
+        # Check if model support the number of points
+        while len(vertices)<config["subsample_levels"][0]:
+            # Too few points. Just replicate points to match model input shape.
+            idx = np.random.choice(len(vertices), min(len(vertices), config["subsample_levels"][0]-len(vertices)), replace=False)
+            add_points = vertices[idx] + np.random.randn(len(idx), 3) * 0.5 * 0.001
+            vertices = np.unique(np.append(vertices, add_points, axis=0), axis=0)
 
         return vertices, cloud_id
 
