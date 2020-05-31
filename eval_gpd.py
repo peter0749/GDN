@@ -297,16 +297,16 @@ if __name__ == '__main__':
     print('NOTE: Limits number of candadate under %d'%max_candidate)
 
     if method == 'GPD':
-        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=3, project_size=60, max_candidate=max_candidate)
+        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
         model = GPDClassifier(3)
     elif method == 'GPD12':
-        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=12, project_size=60, max_candidate=max_candidate)
+        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=12, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
         model = GPDClassifier(12)
     elif method == 'PointNetGPD':
-        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate)
+        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=2)
     elif method == 'PointNetGPDMC':
-        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate)
+        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=3)
     else:
         raise NotImplementedError
