@@ -72,10 +72,11 @@ def hand_match(pred, target, rot_th=5, trans_th=0.02):
     return rot_matched and trans_matched
 
 class GraspDatasetGPDVal(object):
-    def __init__(self, config, projection=False, project_chann=3, project_size=60, max_candidate=2140000000, **kwargs):
+    def __init__(self, config, projection=False, project_chann=3, project_size=60, max_candidate=2140000000, overall_pointcloud_size=None, **kwargs):
         super(GraspDatasetGPDVal, self).__init__(**kwargs)
         self.config = config
 
+        self.overall_pointcloud_size = overall_pointcloud_size
         self.projection = projection
         self.project_chann = project_chann
         if self.project_chann not in [3, 12]:
@@ -252,6 +253,13 @@ class GraspDatasetGPDVal(object):
         if len(candidate)>self.max_candidate:
             candidate = candidate[np.random.choice(len(candidate), self.max_candidate, replace=False)]
         vertices = np.load(cloud_path)
+        if not self.overall_pointcloud_size is None:
+            if len(vertices) < self.overall_pointcloud_size:
+                new_pt = vertices[np.random.choice(len(vertices), self.overall_pointcloud_size-len(vertices), replace=True)]
+                vertices = np.append(vertices, new_pt, axis=0)
+            elif len(vertices) > self.overall_pointcloud_size:
+                vertices = vertices[np.random.choice(len(vertices), self.overall_pointcloud_size, replace=False)]
+
         def gen():
             pool = multiprocessing.Pool(processes=16)
             res = [ pool.apply_async(self.collect_pc, args=(vertices, pose)) for pose in candidate ]
@@ -278,6 +286,11 @@ if __name__ == '__main__':
     max_candidate = int(sys.argv[5])
     output_dir = sys.argv[6]
 
+    input_npts_limit = None
+    if len(sys.argv) == 8:
+        input_npts_limit = int(sys.argv[7])
+        print('NOTE: Limits number of points for each object = %d'%input_npts_limit)
+
     config['sample_path'] = sample_path
     config['point_cloud_path'] = point_cloud_path
 
@@ -301,6 +314,7 @@ if __name__ == '__main__':
     state = torch.load(pretrain_path)
     print(model.load_state_dict(state, strict=False))
     model = model.cuda()
+    model = nn.DataParallel(model)
 
     model.eval()
     with torch.no_grad():
@@ -373,7 +387,7 @@ if __name__ == '__main__':
             candidate = candidate[matched_index]
             logits = logits[matched_index]
 
-            prefix = output_dir + cloud_id[0]
+            prefix = output_dir + '/' + cloud_id[0]
             if not os.path.exists(prefix):
                 os.makedirs(prefix)
             meta = [(logits[n], cloud_id[0], cloud_id[1], n) for n in range(len(logits))]
