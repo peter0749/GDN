@@ -21,6 +21,17 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.euler import GraspDatasetVal, val_collate_fn_setup
             dataset = GraspDatasetVal(config)
             my_collate_fn = val_collate_fn_setup(config)
+    elif config['representation'] == 'euler_noisy':
+        from ..representation.euler_noisy import EulerRepresentation
+        from ..representation.euler_noisy import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
+        loss = None
+        if mode == 'train':
+            raise NotImplementedError("No traning code for euler_noisy! Please use 'euler' representation instead!")
+        else:
+            from ..representation.euler_noisy import GraspDatasetVal, val_collate_fn_setup
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = val_collate_fn_setup(config)
     elif config['representation'] == 'euler_asymmetric_roll':
         from ..representation.euler_asymmetric_roll import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_asymmetric_roll.activation import EulerActivation as ActivationLayer

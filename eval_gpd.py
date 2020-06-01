@@ -72,10 +72,11 @@ def hand_match(pred, target, rot_th=5, trans_th=0.02):
     return rot_matched and trans_matched
 
 class GraspDatasetGPDVal(object):
-    def __init__(self, config, projection=False, project_chann=3, project_size=60, max_candidate=2140000000, overall_pointcloud_size=None, **kwargs):
+    def __init__(self, config, projection=False, project_chann=3, project_size=60, max_candidate=2140000000, overall_pointcloud_size=None, noise_std=None, **kwargs):
         super(GraspDatasetGPDVal, self).__init__(**kwargs)
         self.config = config
 
+        self.noise_std = noise_std
         self.overall_pointcloud_size = overall_pointcloud_size
         self.projection = projection
         self.project_chann = project_chann
@@ -253,6 +254,8 @@ class GraspDatasetGPDVal(object):
         if len(candidate)>self.max_candidate:
             candidate = candidate[np.random.choice(len(candidate), self.max_candidate, replace=False)]
         vertices = np.load(cloud_path)
+        if not self.noise_std is None:
+            vertices = vertices + np.random.randn(3).reshape(1, 3) * self.noise_std * 0.01 # noise_std is in cm
         if not self.overall_pointcloud_size is None:
             if len(vertices) < self.overall_pointcloud_size:
                 new_pt = vertices[np.random.choice(len(vertices), self.overall_pointcloud_size-len(vertices), replace=True)]
@@ -273,22 +276,39 @@ class GraspDatasetGPDVal(object):
 
 if __name__ == '__main__':
     # In[14]:
+    from argparse import ArgumentParser
     import torch.multiprocessing as mp
     mp.set_start_method('spawn', force=True)
     #mp.set_start_method('forkserver', force=True)
     #sample_path = '/tmp2/peter0749/multi-view-data/1-view/proposal'
     #point_cloud_path = '/tmp2/peter0749/multi-view-data/1-view/clouds'
 
-    method = sys.argv[1]
-    pretrain_path = sys.argv[2]
-    sample_path = sys.argv[3]
-    point_cloud_path = sys.argv[4]
-    max_candidate = int(sys.argv[5])
-    output_dir = sys.argv[6]
+    parser = ArgumentParser()
+    parser.add_argument("method", type=str, help="")
+    parser.add_argument("weights", type=str, help="")
+    parser.add_argument("proposal_path", type=str, help="")
+    parser.add_argument("point_cloud_path", type=str, help="")
+    parser.add_argument("output_dir", type=str, help="")
+    parser.add_argument("--max_candidate", type=int, default=300, help="")
+    parser.add_argument("--input_npts_limit", type=int, default=-1, help="")
+    parser.add_argument("--noise_std", type=float, default=-1, help="STDEV of input noise in cm")
+    args = parser.parse_args()
+
+    method = args.method
+    pretrain_path = args.weights
+    sample_path = args.proposal_path
+    point_cloud_path = args.point_cloud_path
+    max_candidate = args.max_candidate
+    output_dir = args.output_dir
+
+    noise_std = None
+    if args.noise_std>0:
+        noise_std = args.noise_std
+        print('NOTE: Add noise to input point clouds with std=%.4f (in cm)'%noise_std)
 
     input_npts_limit = None
-    if len(sys.argv) == 8:
-        input_npts_limit = int(sys.argv[7])
+    if args.input_npts_limit>0:
+        input_npts_limit = args.input_npts_limit
         print('NOTE: Limits number of points for each object = %d'%input_npts_limit)
 
     config['sample_path'] = sample_path
@@ -297,16 +317,16 @@ if __name__ == '__main__':
     print('NOTE: Limits number of candadate under %d'%max_candidate)
 
     if method == 'GPD':
-        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
+        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit, noise_std=noise_std)
         model = GPDClassifier(3)
     elif method == 'GPD12':
-        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=12, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
+        dataset = GraspDatasetGPDVal(config, projection=True, project_chann=12, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit, noise_std=noise_std)
         model = GPDClassifier(12)
-    elif method == 'PointNetGPD':
-        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
+    elif method == 'PointnetGPD':
+        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit, noise_std=noise_std)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=2)
-    elif method == 'PointNetGPDMC':
-        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit)
+    elif method == 'PointnetGPDMC':
+        dataset = GraspDatasetGPDVal(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate, overall_pointcloud_size=input_npts_limit, noise_std=noise_std)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=3)
     else:
         raise NotImplementedError
