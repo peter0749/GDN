@@ -33,10 +33,12 @@ config = dict(
 def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02, topK=10):
     if not pc_prefix is None:
         pc_npy = np.load(pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
-        if len(pc_npy)>512:
-            pc_npy = pc_npy[np.random.choice(len(pc_npy), 512, replace=False)]
-        mlab.clf()
-        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], scale_factor=0.004, mode='sphere', color=(1.0,1.0,0.0), opacity=1.0)
+        if len(pc_npy)>2048:
+            pc_npy = pc_npy[np.random.choice(len(pc_npy), 2048, replace=False)]
+        fig = mlab.figure(bgcolor=(0,0,0))
+        color_scale = np.copy(pc_npy[:,2])
+        color_scale = (color_scale-color_scale.min()) / (color_scale.max()-color_scale.min())
+        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], color_scale, scale_factor=0.004, scale_mode='none', mode='sphere', colormap='jet', opacity=1.0, figure=fig)
     ts_kd_tree = {k: KDTree(np.asarray(v)[:,:,3]) for (k, v) in ts.items() } # KD-tree for each object
     ts_matched = set() # ground truth pose set that matched
     results = []
@@ -56,12 +58,18 @@ def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_
         if not pc_prefix is None and n_cnt<topK:
             gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
             gripper_l, gripper_r, gripper_l_t, gripper_r_t = gripper_inner_edge
+            center_bottom = (gripper_l+gripper_r) / 2.0
+            approach = gripper_l_t-gripper_l
+            approach = approach / np.linalg.norm(approach) # norm must > 0
+            wrist_center = center_bottom - approach * 0.05
 
-            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8)
-            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8)
-            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8)
+            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
+            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
+            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
+            mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
     if not pc_prefix is None:
         mlab.show()
+        mlab.close(all=True)
     return results
 
 def AP(results, topK=10):
@@ -85,6 +93,7 @@ if __name__ == '__main__':
     parser.add_argument("output", type=str, help="Output file in JSON format")
     parser.add_argument("--pc_path", type=str, default="", help="Point cloud path for visualization")
     parser.add_argument("--top_K", type=int, default=10, help="Top-K for AP computation [10]")
+    parser.add_argument("--specify", type=str, default="", help="")
     args = parser.parse_args()
 
     gt_prefix = args.gt
@@ -97,7 +106,11 @@ if __name__ == '__main__':
         pc_prefix = args.pc_path
     topK = args.top_K
     gt_id = os.listdir(gt_prefix)
-    pred_files = glob.glob(pred_prefix + '/*/*.meta')
+    if len(args.specify)>0 and os.path.exists(args.specify):
+        pred_files = [args.specify]
+    else:
+        pred_files = glob.glob(pred_prefix + '/*/*.meta')
+    np.random.shuffle(pred_files)
     pred_id = set( [ x.split('/')[-2] for x in pred_files ] )
     obj2grasp = {}
     for obj_name in gt_id:
@@ -129,7 +142,7 @@ if __name__ == '__main__':
             if not rot_th in APs_for_obj[obj]:
                 APs_for_obj[obj][rot_th] = []
             APs_for_obj[obj][rot_th].append(ap)
-        pbar.set_description('%s%s'%(aps_disp, obj))
+        pbar.set_description('%s%s | %s'%(aps_disp, obj, pc_id))
         pbar.update(1)
     pbar.close()
     del pbar
