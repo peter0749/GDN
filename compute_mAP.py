@@ -30,11 +30,19 @@ config = dict(
     thickness = 0.01, # gripper_width + thickness*2 = hand_outer_diameter (0.08+0.01*2 = 0.1)
 )
 
-def compute_match(ps, ts, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02):
+def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02, topK=10):
+    if not pc_prefix is None:
+        pc_npy = np.load(pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
+        if len(pc_npy)>512:
+            pc_npy = pc_npy[np.random.choice(len(pc_npy), 512, replace=False)]
+        mlab.clf()
+        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], scale_factor=0.004, mode='sphere', color=(1.0,1.0,0.0), opacity=1.0)
     ts_kd_tree = {k: KDTree(np.asarray(v)[:,:,3]) for (k, v) in ts.items() } # KD-tree for each object
     ts_matched = set() # ground truth pose set that matched
     results = []
-    for score, obj_id, pc_id, row_n in ps:
+    for n_cnt, (score, obj_id_m, pc_id_m, row_n) in enumerate(ps):
+        assert obj_id == obj_id_m
+        assert pc_id  == pc_id_m
         pose = np.load(predict_prefix+'/'+obj_id+'/'+pc_id+'.npy')[row_n] # load corresponding prediction ordered by confidence
 
         trans_matched = ts_kd_tree[obj_id].query(pose[:,3].reshape(1, 3), k=len(ts[obj_id]), distance_upper_bound=trans_th)[1][0]
@@ -45,26 +53,15 @@ def compute_match(ps, ts, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_t
                 ts_matched.add((obj_id, pc_id, i))
                 break
         results.append(matched)
-        if not pc_prefix is None:
-            pc_npy = np.load(pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
-            if len(pc_npy)>1000:
-                pc_npy = pc_npy[np.random.choice(len(pc_npy), 1000, replace=False)]
-            mlab.clf()
-            mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], scale_factor=0.004, mode='sphere', color=(1.0,1.0,0.0), opacity=1.0)
+        if not pc_prefix is None and n_cnt<topK:
             gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
             gripper_l, gripper_r, gripper_l_t, gripper_r_t = gripper_inner_edge
 
-            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=config['thickness']/4., color=(0,0,1) if matched else (1,0,0), opacity=0.5)
-            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=config['thickness']/4., color=(0,0,1) if matched else (1,0,0), opacity=0.5)
-            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=config['thickness']/4., color=(0,0,1) if matched else (1,0,0), opacity=0.5)
-            if matched:
-                gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], ts[obj_id][i], config['thickness_side'])
-                gripper_l, gripper_r, gripper_l_t, gripper_r_t = gripper_inner_edge
-
-                mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=config['thickness']/4., color=(0,1,0), opacity=0.5)
-                mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=config['thickness']/4., color=(0,1,0), opacity=0.5)
-                mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=config['thickness']/4., color=(0,1,0), opacity=0.5)
-            mlab.show()
+            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8)
+            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8)
+            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8)
+    if not pc_prefix is None:
+        mlab.show()
     return results
 
 def AP(results, topK=10):
@@ -115,6 +112,7 @@ if __name__ == '__main__':
     pbar = tqdm(total=len(pred_files))
     for path in pred_files:
         obj = path.split('/')[-2]
+        pc_id = path.split('/')[-1][:-5]
         if not obj in APs_for_obj:
             APs_for_obj[obj] = {}
         with open(path, 'rb') as fp:
@@ -122,7 +120,7 @@ if __name__ == '__main__':
             meta.sort(reverse=True) # sort by confidence score
         aps_disp = ''
         for rot_th in thresholds:
-            results = compute_match(meta, obj2grasp, pred_prefix, rot_th=rot_th, pc_prefix=pc_prefix)
+            results = compute_match(meta, obj2grasp, obj, pc_id, pred_prefix, rot_th=rot_th, pc_prefix=pc_prefix, topK=topK)
             ap = AP(results, topK=topK)
             aps_disp = aps_disp + 'AP@%d: %.2f | '%(rot_th, ap)
             if not rot_th in APs_at_threshold:
