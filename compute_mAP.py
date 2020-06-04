@@ -30,15 +30,13 @@ config = dict(
     thickness = 0.01, # gripper_width + thickness*2 = hand_outer_diameter (0.08+0.01*2 = 0.1)
 )
 
-def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02, topK=10):
+tube_radius = 0.002
+
+def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02, topK=10, vis_conf=False, vis_gamma=0.6):
     if not pc_prefix is None:
+        fig = mlab.figure(bgcolor=(1,1,1))
         pc_npy = np.load(pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
-        if len(pc_npy)>2048:
-            pc_npy = pc_npy[np.random.choice(len(pc_npy), 2048, replace=False)]
-        fig = mlab.figure(bgcolor=(0,0,0))
-        color_scale = np.copy(pc_npy[:,2])
-        color_scale = (color_scale-color_scale.min()) / (color_scale.max()-color_scale.min())
-        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], color_scale, scale_factor=0.004, scale_mode='none', mode='sphere', colormap='jet', opacity=1.0, figure=fig)
+        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], scale_factor=0.0015, scale_mode='none', mode='sphere', color=(0.7,0.7,0.7), opacity=1.0, figure=fig)
     ts_kd_tree = {k: KDTree(np.asarray(v)[:,:,3]) for (k, v) in ts.items() } # KD-tree for each object
     ts_matched = set() # ground truth pose set that matched
     results = []
@@ -55,7 +53,7 @@ def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_
                 ts_matched.add((obj_id, pc_id, i))
                 break
         results.append(matched)
-        if not pc_prefix is None and n_cnt<topK:
+        if (not pc_prefix is None) and n_cnt<topK:
             gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
             gripper_l, gripper_r, gripper_l_t, gripper_r_t = gripper_inner_edge
             center_bottom = (gripper_l+gripper_r) / 2.0
@@ -63,10 +61,19 @@ def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_
             approach = approach / np.linalg.norm(approach) # norm must > 0
             wrist_center = center_bottom - approach * 0.05
 
-            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
-            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
-            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
-            mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=0.001, color=(0,1,0) if matched else (1,0,0), opacity=0.8, figure=fig)
+            if vis_conf:
+                control_p = np.clip((n_cnt/topK)**vis_gamma, 0, 1)
+                green_hsv = matplotlib.colors.rgb_to_hsv(np.array([0, 255, 0]))
+                red_hsv   = matplotlib.colors.rgb_to_hsv(np.array([255, 0, 0]))
+                s = tuple(matplotlib.colors.hsv_to_rgb(control_p * red_hsv + (1.-control_p) * green_hsv) / 255.0)
+            else:
+                s = (0,1,0) if matched else (1,0,0)
+
+            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
+            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
+            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
+            mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
+
     if not pc_prefix is None:
         mlab.show()
         mlab.close(all=True)
@@ -94,6 +101,8 @@ if __name__ == '__main__':
     parser.add_argument("--pc_path", type=str, default="", help="Point cloud path for visualization")
     parser.add_argument("--top_K", type=int, default=10, help="Top-K for AP computation [10]")
     parser.add_argument("--specify", type=str, default="", help="")
+    parser.add_argument("--visualize_confidence", action="store_true", help="Visualize confidence of grasps")
+    parser.add_argument("--visualize_gamma", type=float, default=1.0, help="")
     args = parser.parse_args()
 
     gt_prefix = args.gt
@@ -133,7 +142,7 @@ if __name__ == '__main__':
             meta.sort(reverse=True) # sort by confidence score
         aps_disp = ''
         for rot_th in thresholds:
-            results = compute_match(meta, obj2grasp, obj, pc_id, pred_prefix, rot_th=rot_th, pc_prefix=pc_prefix, topK=topK)
+            results = compute_match(meta, obj2grasp, obj, pc_id, pred_prefix, rot_th=rot_th, pc_prefix=pc_prefix, topK=topK, vis_conf=args.visualize_confidence, vis_gamma=args.visualize_gamma)
             ap = AP(results, topK=topK)
             aps_disp = aps_disp + 'AP@%d: %.2f | '%(rot_th, ap)
             if not rot_th in APs_at_threshold:
