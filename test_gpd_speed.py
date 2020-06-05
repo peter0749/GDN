@@ -309,10 +309,13 @@ if __name__ == '__main__':
     if method == 'GPD':
         dataset = GraspDatasetGPD(config, projection=True, project_chann=3, project_size=60, max_candidate=max_candidate)
         model = GPDClassifier(3)
-    elif method == 'PointNetGPD':
+    elif method == 'GPD12':
+        dataset = GraspDatasetGPD(config, projection=True, project_chann=12, project_size=60, max_candidate=max_candidate)
+        model = GPDClassifier(12)
+    elif method == 'PointnetGPD':
         dataset = GraspDatasetGPD(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=2)
-    elif method == 'PointNetGPDMC':
+    elif method == 'PointnetGPDMC':
         dataset = GraspDatasetGPD(config, projection=False, project_chann=3, project_size=60, max_candidate=max_candidate)
         model = PointNetCls(num_points=config['input_points'], input_chann=3, k=3)
     else:
