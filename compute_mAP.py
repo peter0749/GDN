@@ -15,6 +15,14 @@ from pykdtree.kdtree import KDTree
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+try:
+    import pcl
+    import struct
+    import ctypes
+    _VISUALIZE_USE_PCL = True
+except ImportError:
+    _VISUALIZE_USE_PCL = False
+    print("Failed to import pcl. The point clouds will be display in grayscale.")
 
 from model.utils import *
 
@@ -30,13 +38,55 @@ config = dict(
     thickness = 0.01, # gripper_width + thickness*2 = hand_outer_diameter (0.08+0.01*2 = 0.1)
 )
 
-tube_radius = 0.002
+def decode_pcl_rgb(f):
+    s = struct.pack('>f', f)
+    i = struct.unpack('>l', s)[0]
+    pack = ctypes.c_uint32(i).value
+    r = max(float((pack & 0x00FF0000)>> 16) / 255.0, 0)
+    g = max(float((pack & 0x0000FF00)>> 8)  / 255.0, 0)
+    b = max(float((pack & 0x000000FF))      / 255.0, 0)
+    return (r,g,b)
 
-def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02, topK=10, vis_conf=False, vis_gamma=0.6):
+def plot_gripper_tube(x1, x2, tube_radius = 8.0, color = 'gray'):
+    return go.Scatter3d(x = [x1[0], x2[0]], y = [x1[1], x2[1]], z = [x1[2], x2[2]],
+            mode = 'lines',
+            marker=dict(size=0.0,color=(0,0,0), opacity=0.0),
+            line=dict(color=color, width=tube_radius))
+
+def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, trans_th=0.02, topK=10, vis_conf=False, vis_gamma=0.6, vis_proposal=False):
     if not pc_prefix is None:
-        fig = mlab.figure(bgcolor=(1,1,1))
-        pc_npy = np.load(pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
-        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], scale_factor=0.0015, scale_mode='none', mode='sphere', color=(0.7,0.7,0.7), opacity=1.0, figure=fig)
+        plots = []
+        if _VISUALIZE_USE_PCL:
+            pc = pcl.PointCloud_PointXYZRGB()
+            pc.from_file((pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.pcd').encode())
+            pc_npy = np.array(pc)[:,:3]
+            rgb = np.array([ decode_pcl_rgb(pc[i][3]) for i in range(pc.size) ], dtype=np.float32)
+            points_scatter_plot = go.Scatter3d(
+                x = pc_npy[:,0],
+                y = pc_npy[:,1],
+                z = pc_npy[:,2],
+                mode = 'markers',
+                marker=dict(
+                    size=2.0,
+                    color=rgb,
+                    opacity=1.0
+                )
+            )
+            del pc
+        else:
+            pc_npy = np.load(pc_prefix+'/'+obj_id+'/clouds/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
+            points_scatter_plot = go.Scatter3d(
+                x = pc_npy[:,0],
+                y = pc_npy[:,1],
+                z = pc_npy[:,2],
+                mode = 'markers',
+                marker=dict(
+                    size=2.0,
+                    color='gray',
+                    opacity=1.0
+                )
+            )
+        plots.append(points_scatter_plot)
     ts_kd_tree = {k: KDTree(np.asarray(v)[:,:,3]) for (k, v) in ts.items() } # KD-tree for each object
     ts_matched = set() # ground truth pose set that matched
     results = []
@@ -63,20 +113,56 @@ def compute_match(ps, ts, obj_id, pc_id, predict_prefix='', pc_prefix=None, rot_
 
             if vis_conf:
                 control_p = np.clip((n_cnt/topK)**vis_gamma, 0, 1)
-                green_hsv = matplotlib.colors.rgb_to_hsv(np.array([0, 255, 0]))
+                green_hsv = matplotlib.colors.rgb_to_hsv(np.array([0, 100, 0]))
                 red_hsv   = matplotlib.colors.rgb_to_hsv(np.array([255, 0, 0]))
-                s = tuple(matplotlib.colors.hsv_to_rgb(control_p * red_hsv + (1.-control_p) * green_hsv) / 255.0)
+                s = np.asarray(np.clip(matplotlib.colors.hsv_to_rgb(control_p * red_hsv + (1.-control_p) * green_hsv), 0, 255), dtype=np.uint8)
+                s = 'rgba(%d,%d,%d,178)'%(s[0],s[1],s[2])
+            elif vis_proposal:
+                s = 'rgba(100,100,100,178)'
             else:
-                s = (0,1,0) if matched else (1,0,0)
+                s = 'rgba(0,100,0,178)' if matched else 'rgba(255,0,0,178)'
 
-            mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
-            mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
-            mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
-            mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=tube_radius, color=s, opacity=0.8, figure=fig)
-
+            plots.append(
+                plot_gripper_tube(gripper_l, gripper_r, color=s)
+            )
+            plots.append(
+                plot_gripper_tube(gripper_l, gripper_l_t, color=s)
+            )
+            plots.append(
+                plot_gripper_tube(gripper_r, gripper_r_t, color=s)
+            )
+            plots.append(
+                plot_gripper_tube(center_bottom, wrist_center, color=s)
+            )
     if not pc_prefix is None:
-        mlab.show()
-        mlab.close(all=True)
+        fig = go.Figure({
+            "data": plots,
+            "layout": go.Layout(title="",
+                                showlegend=False,
+                                plot_bgcolor='rgba(1,1,1,1)')
+        })
+        fig.update_layout(
+            scene = dict(
+                xaxis = {
+                    'showgrid': False,
+                    'zeroline': False,
+                    'visible': False,
+                },
+                yaxis = {
+                    'showgrid': False,
+                    'zeroline': False,
+                    'visible': False,
+                },
+                zaxis = {
+                    'showgrid': False,
+                    'zeroline': False,
+                    'visible': False,
+                },
+                aspectratio = dict(x=1, y=1, z=1)
+            )
+        )
+        fig.show()
+        input("Press Enter to continue")
     return results
 
 def AP(results, topK=10):
@@ -102,6 +188,7 @@ if __name__ == '__main__':
     parser.add_argument("--top_K", type=int, default=10, help="Top-K for AP computation [10]")
     parser.add_argument("--specify", type=str, default="", help="")
     parser.add_argument("--visualize_confidence", action="store_true", help="Visualize confidence of grasps")
+    parser.add_argument("--visualize_proposal", action="store_true", help="")
     parser.add_argument("--visualize_gamma", type=float, default=1.0, help="")
     args = parser.parse_args()
 
@@ -111,7 +198,8 @@ if __name__ == '__main__':
     output = args.output
     pc_prefix = None
     if os.path.exists(args.pc_path):
-        from mayavi import mlab
+        import plotly
+        import plotly.graph_objs as go
         pc_prefix = args.pc_path
     topK = args.top_K
     gt_id = os.listdir(gt_prefix)
@@ -142,7 +230,7 @@ if __name__ == '__main__':
             meta.sort(reverse=True) # sort by confidence score
         aps_disp = ''
         for rot_th in thresholds:
-            results = compute_match(meta, obj2grasp, obj, pc_id, pred_prefix, rot_th=rot_th, pc_prefix=pc_prefix, topK=topK, vis_conf=args.visualize_confidence, vis_gamma=args.visualize_gamma)
+            results = compute_match(meta, obj2grasp, obj, pc_id, pred_prefix, rot_th=rot_th, pc_prefix=pc_prefix, topK=topK, vis_conf=args.visualize_confidence, vis_gamma=args.visualize_gamma, vis_proposal=args.visualize_proposal)
             ap = AP(results, topK=topK)
             aps_disp = aps_disp + 'AP@%d: %.2f | '%(rot_th, ap)
             if not rot_th in APs_at_threshold:
