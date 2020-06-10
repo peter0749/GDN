@@ -172,21 +172,21 @@ class DualPointNetCls(nn.Module):
 class PointNetCls(nn.Module):
     def __init__(self, num_points = 2500, input_chann = 3, k = 2, return_features=False):
         super(PointNetCls, self).__init__()
-        self.feature_dim = 256
+        self.feature_dim = 1024
         self.num_points = num_points
         self.feat = PointNetfeat(num_points, input_chann=input_chann, global_feat=True)
-        self.fc1 = nn.Linear(1024, 512)
-        self.fc2 = nn.Linear(512, self.feature_dim)
-        self.fc3 = nn.Linear(self.feature_dim, k)
+        self.fc1 = nn.Linear(self.feature_dim, 512)
+        self.fc2 = nn.Linear(512, 256)
+        self.fc3 = nn.Linear(256, k)
         self.bn1 = nn.BatchNorm1d(512)
-        self.bn2 = nn.BatchNorm1d(self.feature_dim)
+        self.bn2 = nn.BatchNorm1d(256)
         self.relu = nn.ReLU()
         self.return_features = return_features
     def forward(self, x):
         x, trans = self.feat(x)
+        f = x
         x = F.relu(self.bn1(self.fc1(x)))
         x = F.relu(self.bn2(self.fc2(x)))
-        f = x
         x = self.fc3(x)
         if self.return_features:
             return F.log_softmax(x, dim=-1), trans, f

@@ -7,13 +7,14 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from MulticoreTSNE import MulticoreTSNE as TSNE
+from sklearn.model_selection import train_test_split
 
 if __name__=='__main__':
     input_file = sys.argv[1]
     if not os.path.exists('visualization_embedding'):
         os.makedirs('visualization_embedding')
-    max_num_pred_per_pc = 20
-    max_num_gt_per_pc   = 40
+    max_num_pred_per_pc = 10
+    max_num_gt_per_pc   = 30
     plot_info = []
     method_set = {}
     method_list = []
@@ -77,19 +78,22 @@ if __name__=='__main__':
             else:
                 scores = np.append(scores, local_scores, axis=0)
         target_labels = np.asarray(target_labels)
-        embeddings = TSNE(n_jobs=30, perplexity=10, n_iter=2000, verbose=1).fit_transform(all_features)
+        if len(target_labels)>20000:
+            _, target_labels, _, scores, _, all_features = train_test_split(target_labels, scores, all_features, test_size=20000, stratify=target_labels, shuffle=True)
+        embeddings = TSNE(n_jobs=30, perplexity=20, n_iter=2000, verbose=1).fit_transform(all_features)
         for method in method_list:
-            color = method_set[method]
+            color = method_set[method][1:-1].split(',') #(255,255,255)
+            color = np.array([int(color[0]), int(color[1]), int(color[2])], dtype=np.float32) / 255.0
             ind = (target_labels==method)
             print('%s : %d'%(method, len(ind)))
             vis = embeddings[ind]
-            s   = scores[ind]
+            s   = np.clip(np.asarray(scores[ind])**0.3333, 0.5, 1.0)
             if method!='GT':
-                plt.scatter(vis[0:1,0], vis[0:1,1], color=color, alpha=1.0, marker='.', label=method)
-                plt.scatter(vis[:,0], vis[:,1], s*200, color=color, alpha=0.5, marker='.')
+                plt.scatter(vis[0:1,0], vis[0:1,1], c=color, alpha=1.0, marker='.', label=method)
+                plt.scatter(vis[:,0], vis[:,1], c=np.append(np.tile(color[np.newaxis], (len(s), 1)), s.reshape(-1, 1), axis=1), marker='.')
             else:
-                plt.scatter(vis[:,0], vis[:,1], color=color, alpha=1.0, marker='o', label=method)
-        plt.legend(loc='upper right')
+                plt.scatter(vis[:,0], vis[:,1], color=color, alpha=1.0, marker='.', label=method)
+        plt.legend(loc='upper right', framealpha=0.9)
         plt.title(obj_name)
         plt.savefig('visualization_embedding/%s.png'%obj_name)
         plt.clf()
