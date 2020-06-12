@@ -76,7 +76,7 @@ class GraspDatasetGPDVal(object):
         self.normal_K = 10
         self.voxel_point_num  = 50
         self.projection_margin = 1
-        self.minimum_point_amount = 150
+        self.minimum_point_amount = 30
 
         assert 'object_list' in config
         self.object_set_val   = config['object_list']['val']
@@ -233,7 +233,10 @@ class GraspDatasetGPDVal(object):
         cloud_id = (cloud_id[-3], cloud_id[-1])
         grasp_pc = None
         if config['eval_ideal_sampler']:
-            candidate = np.load(config['sample_path']+'/'+cloud_id[0]+'.npy')
+            if not os.path.exists(config['sample_path']+'/'+cloud_id[0]+'.npy'):
+                candidate = np.load(config['sample_path']+'/'+cloud_id[0]+'_nms.npy')
+            else:
+                candidate = np.load(config['sample_path']+'/'+cloud_id[0]+'.npy')
         else:
             candidate = np.load(config['sample_path']+'/'+cloud_id[0]+'/'+cloud_id[1]+'.npy')
         if len(candidate.shape)!=3: # no sample
@@ -266,6 +269,7 @@ if __name__ == '__main__':
     parser.add_argument("proposal_path", type=str, help="")
     parser.add_argument("point_cloud_path", type=str, help="")
     parser.add_argument("output_dir", type=str, help="")
+    parser.add_argument("--eval_ideal_sampler", action="store_true", help="")
     args = parser.parse_args()
 
     method = args.method
@@ -276,6 +280,7 @@ if __name__ == '__main__':
 
     config['sample_path'] = sample_path
     config['point_cloud_path'] = point_cloud_path
+    config['eval_ideal_sampler'] = args.eval_ideal_sampler
 
     if method == 'GPD':
         dataset = GraspDatasetGPDVal(config, projection=True, project_chann=3, project_size=60)
