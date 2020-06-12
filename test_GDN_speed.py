@@ -19,9 +19,9 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 torch.backends.cudnn.benchmark = True
 
-from model.utils import *
-from model.detector.utils import *
-from model import import_model_by_setting
+from gdn.utils import *
+from gdn.detector.utils import *
+from gdn import import_model_by_setting
 import importlib
 import copy
 from argparse import ArgumentParser

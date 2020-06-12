@@ -24,7 +24,7 @@ except ImportError:
     _VISUALIZE_USE_PCL = False
     print("Failed to import pcl. The point clouds will be display in grayscale.")
 
-from model.utils import *
+from gdn.utils import *
 
 from argparse import ArgumentParser
 
