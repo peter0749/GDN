@@ -117,10 +117,10 @@ class EulerRepresentation(AbstractRepresentation):
                                                          **kwargs))
         return new_poses
 
-    def filter_out_invalid_grasp_batch(self, pts, poses):
+    def filter_out_invalid_grasp_batch(self, pts, poses, n_collision=2):
         new_poses = []
         for b in range(len(pts)):
-            new_poses.append(self.filter_out_invalid_grasp(pts[b], poses[b]))
+            new_poses.append(self.filter_out_invalid_grasp(pts[b], poses[b], n_collision=n_collision))
         return new_poses
 
     def filter_out_invalid_grasp(self, pts, poses, n_collision=2):
