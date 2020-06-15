@@ -17,8 +17,8 @@ import multiprocessing
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from baseline.pointnet import PointNetCls, DualPointNetCls
-from baseline.gpd import GPDClassifier
+from gdn.baseline.pointnet import PointNetCls, DualPointNetCls
+from gdn.baseline.gpd import GPDClassifier
 from collections import namedtuple
 #torch.backends.cudnn.benchmark = True
 from tensorboardX import SummaryWriter
