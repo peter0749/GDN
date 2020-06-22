@@ -186,3 +186,58 @@ def retrive_from_feature_volume(pts, feature, M, n_pitch, n_yaw, hand_height, gr
                 continue
         poses.append((score, pose))
     return poses
+
+@nb.njit
+def retrive_from_feature_volume_fast(pts, feature, M, n_pitch, n_yaw, hand_height, gripper_width, thickness_side, rot_th, trans_th, n_output=10, threshold=0.0, nms=False):
+    roll_180 = np.array([[1,  0,  0],
+                         [0, -1,  0],
+                         [0,  0, -1]], dtype=np.float32)
+    if M*n_pitch*n_yaw < n_output:
+        n_output = M*n_pitch*n_yaw
+    index = np.argsort(feature[...,0].ravel())[-n_output:][::-1]
+    poses = []
+    for ind in index:
+        yaw_idx = ind%n_yaw
+        pitch_idx = (ind//n_yaw)%n_pitch
+        pt_idx = (ind//(n_yaw*n_pitch))%M
+        score = feature[pt_idx, pitch_idx, yaw_idx, 0]
+        if score <= threshold:
+            break
+        xyz = feature[pt_idx, pitch_idx, yaw_idx:yaw_idx+1, 1:4] # (1, 3)
+        xyz[:,0] = xyz[:,0] * hand_height
+        xyz[:,1] = (xyz[:,1] * gripper_width) - gripper_width / 2.0
+        xyz[:,2] = (xyz[:,2] * thickness_side) - thickness_side / 2.0
+        xyz = xyz.T # (3, 1)
+        pt  = pts[pt_idx:pt_idx+1].T # (3, 1)
+        roll = feature[pt_idx, pitch_idx, yaw_idx, 4:6] # (2,)
+        if roll[1] == 0:
+            roll[1] = 1e-8
+        roll_f = float(np.arctan((1-roll[0])/roll[1]))
+        pitch_residual = feature[pt_idx, pitch_idx, yaw_idx, 6]
+        yaw_residual = feature[pt_idx, pitch_idx, yaw_idx, 7]
+        pitch = float(pitch_idx*(np.pi/n_pitch)-np.pi/2.0 + pitch_residual*(np.pi/n_pitch))
+        yaw = float(yaw_idx*(np.pi*2.0/n_yaw)-np.pi + yaw_residual*(np.pi*2.0/n_yaw))
+        rot = rotation_euler(roll_f, pitch, yaw)
+        if rot[2,2]<0: # upside-down
+            rot = np.dot(roll_180, rot) # flip
+        tran = pt - np.dot(rot, xyz) # (3, 1) - (3, 3) x (3, 1) = (3, 1)
+        pose = np.append(rot, tran, axis=-1).astype(np.float32) # (3, 4)
+        poses.append(pose)
+    return poses
+
+def filter_out_invalid_grasp_fast(config, pts, poses, n_collision=2):
+    to_delete = []
+    for i in range(len(poses)):
+        pose = poses[i]
+        gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width']+config['thickness']*2, config['hand_height'], pose, config['thickness_side'], backward=0.20)[1:]
+        gripper_inner1, gripper_inner2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])[1:]
+        outer_pts = crop_index(pts, gripper_outer1, gripper_outer2)
+        if len(outer_pts) == 0:
+            to_delete.append(i)
+            continue
+        inner_pts = crop_index(pts, gripper_inner1, gripper_inner2, search_idx=outer_pts)
+        if len(outer_pts) - len(np.intersect1d(inner_pts, outer_pts)) > n_collision:
+            to_delete.append(i)
+            continue
+    np.delete(poses, to_delete, axis=0)
+    return poses
