@@ -77,6 +77,21 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.euler_no_bin import GraspDatasetVal, val_collate_fn_setup
             dataset = GraspDatasetVal(config)
             my_collate_fn = val_collate_fn_setup(config)
+    elif config['representation'] == 's4g':
+        from ..representation.s4g import S4GRepresentation, MultiTaskLossWrapper
+        from ..representation.s4g.activation import S4GActivation as ActivationLayer
+        representation = S4GRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.s4g import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.s4g import GraspDatasetVal, val_collate_fn_setup
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = val_collate_fn_setup(config)
     else:
         raise NotImplementedError("Your setting is invalid! Please check the configuration file and try again.")
 
@@ -87,6 +102,9 @@ def import_model_by_setting(config, mode='train'):
     # Load model backbone
     if config['backbone'] == 'pointnet2':
         from ..detector.pointnet2.backbone import Pointnet2MSG
+        base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
+    elif config['backbone'] == 'pointnet2_s4g':
+        from ..detector.pointnet2_s4g.backbone import Pointnet2MSG
         base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'edgeconv':
         from ..detector.edgeconv.backbone import EdgeDet
