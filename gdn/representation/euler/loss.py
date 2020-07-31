@@ -45,10 +45,10 @@ def loss_baseline(y_pred, y_true, cls_w, x_w, y_w, z_w, rot_w, **kwargs):
         yaw_residual_gt   = y_true_masked[...,7] # 0~1
 
         pitch_gt = y_mask[2].float()*(pi/accum_gt.size(2))-pi/2.0 + pitch_residual_gt*(pi/accum_gt.size(2))
-        yaw_gt   = y_mask[3].float()*(pi/accum_gt.size(3))-pi/2.0 + yaw_residual_gt*(pi/accum_gt.size(3))
+        yaw_gt   = y_mask[3].float()*(pi*2.0/accum_gt.size(3))-pi + yaw_residual_gt*(pi*2.0/accum_gt.size(3))
 
         pitch_p = y_mask[2].float()*(pi/accum_gt.size(2))-pi/2.0 + pitch_residual_p*(pi/accum_gt.size(2))
-        yaw_p   = y_mask[3].float()*(pi/accum_gt.size(3))-pi/2.0 + yaw_residual_p*(pi/accum_gt.size(3))
+        yaw_p   = y_mask[3].float()*(pi*2.0/accum_gt.size(3))-pi + yaw_residual_p*(pi*2.0/accum_gt.size(3))
 
         zeros = torch.zeros(1, device=roll_gt.device).expand(roll_gt.size(0)) # prevent NaNs
 
