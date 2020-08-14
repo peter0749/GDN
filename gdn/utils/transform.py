@@ -1,6 +1,27 @@
 import numpy as np
 import numba as nb
+from scipy.spatial import ConvexHull
 
+
+def HPR(P, C, param=np.pi):
+    '''
+    Port from:
+        https://www.mathworks.com/matlabcentral/fileexchange/16581-hidden-point-removal
+        (MathLab -> Python3.6)
+    '''
+    C = np.squeeze(C)[np.newaxis]
+    ### Do Spherical flipping ###
+    n = P.shape[0] # n points
+    f = P.shape[1] # f dims
+    P = P-C # center to C
+    nP = np.linalg.norm(P, axis=1, keepdims=True)
+    R = nP.max() * (10.0**param) # shape: scalar
+    flippedPoints = 2.*(P * (-nP+R)) / nP + P
+
+    paddFlippedPoints = np.pad(flippedPoints, ((0,1),(0,0)), mode='constant', constant_values=0)
+    convHull = ConvexHull(paddFlippedPoints).vertices[:-1] # remove padding
+
+    return convHull
 
 @nb.njit
 def rotation_euler(x, y, z):
