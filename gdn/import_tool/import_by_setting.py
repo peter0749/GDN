@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.optim as optim
 from ..detector.utils import freeze_model, unfreeze_model
+from itertools import chain
 
 
 def import_model_by_setting(config, mode='train'):
@@ -19,6 +20,21 @@ def import_model_by_setting(config, mode='train'):
             my_collate_fn = collate_fn_setup(config, representation)
         else:
             from ..representation.euler import GraspDatasetVal, val_collate_fn_setup
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = val_collate_fn_setup(config)
+    elif config['representation'] == 'euler_scene':
+        from ..representation.euler_scene import EulerRepresentation, MultiTaskLossWrapper
+        from ..representation.euler_scene.activation import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.euler_scene import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.euler_scene import GraspDatasetVal, val_collate_fn_setup
             dataset = GraspDatasetVal(config)
             my_collate_fn = val_collate_fn_setup(config)
     elif config['representation'] == 'euler_noisy':
