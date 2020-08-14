@@ -174,7 +174,6 @@ if __name__ == '__main__':
                     rot_loss_epoch += rot_loss
                     pred_poses = representation.retrive_from_feature_volume_batch(
                                 pc.cpu().numpy(),
-                                reverse_lookup_index,
                                 pred.detach().cpu().numpy(),
                                 n_output=config['eval_pred_maxbox'],
                                 threshold=config['eval_pred_threshold'],
