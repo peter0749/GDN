@@ -25,7 +25,7 @@ class GraspDataset(Dataset):
     def __init__(self, config, **kwargs):
         super(GraspDataset, self).__init__(**kwargs)
         self.config = config
-        self.max_npts = 12000
+        self.max_npts = 30000
 
         self.train_scene_path = config['train_data']
         self.val_scene_path = config['val_data']
@@ -208,7 +208,7 @@ class GraspDatasetVal(Dataset):
     def __init__(self, config, **kwargs):
         super(GraspDatasetVal, self).__init__(**kwargs)
         self.config = config
-        self.max_npts = 12000
+        self.max_npts = 30000
         self.val_scene_path = config['val_data']
         self.val_label_path = config['val_label']
         self.val_labels = list(map(lambda x: os.path.split(x)[-1], glob.glob(self.val_label_path+'/*.npy')))
