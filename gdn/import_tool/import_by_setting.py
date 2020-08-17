@@ -34,9 +34,9 @@ def import_model_by_setting(config, mode='train'):
             dataset = GraspDataset(config)
             my_collate_fn = collate_fn_setup(config, representation)
         else:
-            from ..representation.euler_scene import GraspDatasetVal, val_collate_fn_setup
+            from ..representation.euler_scene import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
-            my_collate_fn = val_collate_fn_setup(config)
+            my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 'euler_scene_rp':
         from ..representation.euler_scene_rp import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_rp.activation import EulerActivation as ActivationLayer
@@ -49,9 +49,9 @@ def import_model_by_setting(config, mode='train'):
             dataset = GraspDataset(config)
             my_collate_fn = collate_fn_setup(config, representation)
         else:
-            from ..representation.euler_scene_rp import GraspDatasetVal, val_collate_fn_setup
+            from ..representation.euler_scene_rp import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
-            my_collate_fn = val_collate_fn_setup(config)
+            my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 'euler_noisy':
         from ..representation.euler_noisy import EulerRepresentation
         from ..representation.euler_noisy import EulerActivation as ActivationLayer

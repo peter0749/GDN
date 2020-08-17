@@ -235,6 +235,9 @@ class GraspDatasetVal(Dataset):
         hand_poses[:,:,3] -= pc_origin
         view_point = np.array([[0.0, 0.0, 2.0]], dtype=np.float32) # (1, 3)
 
+        # Remove plane
+        pc_scene = pc_scene[pc_scene[:,2]>0.0035]
+
         if len(pc_scene)>self.max_npts:
             idx = np.random.choice(len(pc_scene), self.max_npts, replace=False)
             pc_scene = pc_scene[idx]
@@ -244,8 +247,8 @@ class GraspDatasetVal(Dataset):
         pc_scene = pc_scene[visible_ind]
         # Save to PLY for visualization?
         # TODO: Delete ME
-        pc = pcl.PointCloud(pc_scene)
-        pcl.save(pc, "simulated_single_view.ply", format='ply')
+        # pc = pcl.PointCloud(pc_scene)
+        # pcl.save(pc, "simulated_single_view.ply", format='ply')
 
         # Subsample
         # pc_scene = np.unique(pc_scene, axis=0) # FIXME: O(NlogN)
@@ -268,13 +271,11 @@ class GraspDatasetVal(Dataset):
         return pc_scene, hand_poses
 
 class collate_fn_setup_val(object):
-    def __init__(self, config, representation):
+    def __init__(self, config):
         self.config = config
-        self.representation = representation
         self.aug = False
     def __call__(self, batch):
         config = self.config
-        representation = self.representation
         pc_batch, batch_gt_poses = zip(*batch)
         pc_batch = np.stack(pc_batch).astype(np.float32)
         return torch.FloatTensor(pc_batch), batch_gt_poses
