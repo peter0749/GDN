@@ -7,6 +7,7 @@ import json
 import time
 import warnings
 import random
+import uuid
 import numpy as np
 import numba as nb
 import json
@@ -22,7 +23,7 @@ from ...utils import *
 
 
 class GraspDataset(Dataset):
-    def __init__(self, config, **kwargs):
+    def __init__(self, config, verbose=True, **kwargs):
         super(GraspDataset, self).__init__(**kwargs)
         self.config = config
         self.max_npts = 30000
@@ -32,50 +33,99 @@ class GraspDataset(Dataset):
         self.train_label_path = config['train_label']
         self.val_label_path = config['val_label']
 
-        self.train_labels = list(map(lambda x: os.path.split(x)[-1], glob.glob(self.train_label_path+'/*.npy')))
-        self.val_labels = list(map(lambda x: os.path.split(x)[-1], glob.glob(self.val_label_path+'/*.npy')))
+        self.aug_size = config["aug_size"]
+        self.cache_path = config["cache_path"]
+        if not os.path.exists(self.cache_path):
+            os.makedirs(self.cache_path)
+
+        self.train_labels = list(sorted(list(map(lambda x: os.path.split(x)[-1], glob.glob(self.train_label_path+'/*.npy')))))
+        self.val_labels = list(sorted(list(map(lambda x: os.path.split(x)[-1], glob.glob(self.val_label_path+'/*.npy')))))
 
         self.use_aug = False
+        self.training = False
+
+        if "d_uuid" in config:
+            if verbose:
+                print("Found uuid in your configuration file. We will train on cached dataset.")
+            self.dataset_uuid = uuid.UUID(config["d_uuid"])
+        else:
+            self.dataset_uuid = uuid.uuid1()
+
+        self.config["d_uuid"] = str(self.dataset_uuid)
+
+    def get_config(self):
+        return self.config
 
     def train(self):
         self.scene_path = self.train_scene_path
         self.label_path = self.train_label_path
         self.labels = self.train_labels
         self.use_aug = True
+        self.training = True
     def eval(self):
         self.scene_path = self.val_scene_path
         self.label_path = self.val_label_path
         self.labels = self.val_labels
         self.use_aug = False
+        self.training = False
     def __len__(self):
+        if self.use_aug:
+            return len(self.labels) * self.aug_size
         return len(self.labels)
     def __getitem__(self, item_idx):
+        mode = "train" if self.training else "val"
+        if self.use_aug:
+            true_idx = int(item_idx // self.aug_size)
+            aug_idx = int(item_idx % self.aug_size)
+            id_ = self.labels[true_idx]
+            cache_data_path = self.cache_path + ("/%s-data-%d-%d.p"%(mode, true_idx, aug_idx))
+            cache_label_path = self.cache_path + ("/%s-label-%d-%d.p"%(mode, true_idx, aug_idx))
+        else:
+            id_ = self.labels[item_idx]
+            cache_data_path = self.cache_path + ("/%s-data-%d.p"%(mode, item_idx))
+            cache_label_path = self.cache_path + ("/%s-label-%d.p"%(mode, item_idx))
+        # Check if the pre-computed results exist
+        if os.path.exists(cache_data_path) and os.path.exists(cache_label_path):
+            gc.disable()
+            with open(cache_data_path, "rb") as fp:
+                data = pickle.load(fp)
+            with open(cache_label_path, "rb") as fp:
+                label = pickle.load(fp)
+            gc.enable()
+            # Integrity check
+            if data['id'] == id_ and label['id'] == id_ and\
+               data['d_uuid'] == self.dataset_uuid and\
+               label['d_uuid'] == self.dataset_uuid:
+                return data['content'], label['content']
+        # raise RuntimeError("You shall not pass!!!")  #  TODO: REMOVE ME!!!
+        sys.stderr.write("Wrong\n")
         config = self.config
-        id_ = self.labels[item_idx]
-        pc_scene = np.load(self.scene_path + '/' + id_) # (#npt, 3)
+        pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
         hand_poses = np.load(self.label_path + '/' + id_) # (N, 3, 4)
+
+        if len(pc_scene)>self.max_npts:
+            idx = np.random.choice(len(pc_scene), self.max_npts, replace=False)
+            pc_scene = pc_scene[idx]
 
         # Normalize
         pc_origin = (pc_scene.max(axis=0) + pc_scene.min(axis=0)) / 2.0
         pc_origin[2] = pc_scene[:,2].min() # 0?
         pc_origin = pc_origin.reshape(1, 3)
         pc_scene -= pc_origin
-        hand_poses[:,:,3] -= pc_origin
+        if len(hand_poses) > 0:
+            hand_poses[:,:,3] -= pc_origin
         view_point = np.array([[0.0, 0.0, 2.0]], dtype=np.float32) # (1, 3)
-
-        if len(pc_scene)>self.max_npts:
-            idx = np.random.choice(len(pc_scene), self.max_npts, replace=False)
-            pc_scene = pc_scene[idx]
 
         if self.use_aug:
             # Random translation
-            translation = (np.random.randn(3) * 0.02).reshape(1, 3)
+            translation = (np.random.randn(3) * 0.03).reshape(1, 3)
             pc_scene += translation
-            hand_poses[:,:,3] += translation
+            if len(hand_poses) > 0:
+                hand_poses[:,:,3] += translation
 
             # Random rotation
-            rx = float(np.random.uniform(0.08, 0.08)) # ~5 degrees
-            ry = float(np.random.uniform(0.08, 0.08)) # ~5 degrees
+            rx = float(np.random.uniform(-0.10, 0.10)) # ~8 degrees
+            ry = float(np.random.uniform(-0.10, 0.10)) # ~8 degrees
             rz = float(np.random.uniform(-np.pi, np.pi))
             random_rotation = rotation_euler(rx, ry, rz)
             pc_scene = np.matmul(pc_scene, random_rotation.T)
@@ -83,10 +133,18 @@ class GraspDataset(Dataset):
             # Random viewpoint
             view_point[0,0] = np.random.uniform(-0.4, 0.4) # -+ 40cm
             view_point[0,1] = np.random.uniform(-0.4, 0.4) # -+ 40cm
-            view_point[0,2] = np.random.uniform(1.2, 3.0) # 1.2m ~ 3.0m
+            view_point[0,2] = np.random.uniform(0.6, 3.0) # 0.6m ~ 3.0m
 
             # Random jittering
-            pc_scene += np.random.randn(*pc_scene.shape) * np.random.uniform(0.000, 0.002) # noise: 0cm ~ 0.4cm
+            pc_scene += np.random.randn(*pc_scene.shape) * np.random.uniform(0.000, 0.0025) # noise: 0cm ~ 0.5cm
+
+            # Add isolated points
+            n_outliers = np.random.randint(int(np.ceil(0.05 * len(pc_scene))))
+            if n_outliers > 0:
+                isolated_points = np.random.uniform(np.min(pc_scene, axis=0, keepdims=True),
+                                  np.max(pc_scene, axis=0, keepdims=True),
+                                  size=(n_outliers, 3))
+                pc_scene = np.append(pc_scene, isolated_points, axis=0)
 
         # Simulate single view by Hidden Point Removal
         visible_ind = HPR(pc_scene, view_point)
@@ -147,6 +205,14 @@ class GraspDataset(Dataset):
                 continue
             pose_idx_pairs.append((pose, set(enclosed_pts)))
 
+        # Write the results to cache
+        gc.disable()
+        with open(cache_data_path, "wb") as fp:
+            pickle.dump({'id': id_, 'd_uuid': self.dataset_uuid, 'content': pc_scene}, fp)
+        with open(cache_label_path, "wb") as fp:
+            pickle.dump({'id': id_, 'd_uuid': self.dataset_uuid, 'content': pose_idx_pairs}, fp)
+        gc.enable()
+
         return pc_scene, pose_idx_pairs
 
 class collate_fn_setup(object):
@@ -163,15 +229,14 @@ class collate_fn_setup(object):
         representation = self.representation
         pc_batch, pose_idx_pairs_batch = zip(*batch)
         pc_batch = np.stack(pc_batch).astype(np.float32)
-        pose_idx_pairs_batch = list(pose_idx_pairs_batch)
-
-        feature_volume_batch = []
+        input_points = pc_batch.shape[1]
+        feature_volume_batch = np.zeros((len(pose_idx_pairs_batch), input_points,
+                                       config['n_pitch'],
+                                       config['n_yaw'],
+                                       8), dtype=np.float32)
         batch_gt_poses = []
 
-        input_points = pc_batch.shape[1]
-
         for b in range(len(pose_idx_pairs_batch)):
-            sample_dict = {}
             for n, (pose, ind) in enumerate(pose_idx_pairs_batch[b]):
                 if len(ind)==0:
                     continue
@@ -184,22 +249,7 @@ class collate_fn_setup(object):
                  yaw_residual) = representation.grasp_representation(pose,
                  pc_batch[b,:], # shape: (N, 3)
                  ind)
-                unique_grasp_key = (tuple(ind), pitch_index, yaw_index)
-                unique_grasp_value = (xyz, roll, pitch_residual, yaw_residual)
-                if not unique_grasp_key in sample_dict:
-                    sample_dict[unique_grasp_key] = unique_grasp_value
-                else:
-                    old_pitch_residual, old_yaw_residual = sample_dict[unique_grasp_key][2:]
-                    if (pitch_residual-0.5)**2 + (yaw_residual-0.5)**2 < \
-                       (old_pitch_residual-0.5)**2 + (old_yaw_residual-0.5)**2:
-                        sample_dict[unique_grasp_key] = unique_grasp_value
-            feature_volume = np.zeros((input_points,
-                                       config['n_pitch'],
-                                       config['n_yaw'],
-                                       8), dtype=np.float32)
-            for n, ((ind, pitch_index, yaw_index), (xyz, roll, pitch_residual, yaw_residual)) in enumerate(sample_dict.items()):
-                representation.update_feature_volume(feature_volume, ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
-            feature_volume_batch.append(feature_volume)
+                representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
             if len(pose_idx_pairs_batch[b])>0:
                 batch_gt_poses.append( next(zip(*pose_idx_pairs_batch[b]))  )
         return torch.FloatTensor(pc_batch), torch.FloatTensor(feature_volume_batch), batch_gt_poses
@@ -262,7 +312,7 @@ class GraspDatasetVal(Dataset):
         else: # <=
             np.random.shuffle(hand_poses)
 
-        return pc_scene, hand_poses
+        return pc_scene, hand_poses, pc_origin, os.path.splitext(id_)[0]
 
 class collate_fn_setup_val(object):
     def __init__(self, config):
@@ -270,6 +320,7 @@ class collate_fn_setup_val(object):
         self.aug = False
     def __call__(self, batch):
         config = self.config
-        pc_batch, batch_gt_poses = zip(*batch)
+        pc_batch, batch_gt_poses, pc_origin, scene_id = zip(*batch)
         pc_batch = np.stack(pc_batch).astype(np.float32)
-        return torch.FloatTensor(pc_batch), batch_gt_poses
+        pc_origin = np.stack(pc_origin) # (N, 1, 3)
+        return torch.FloatTensor(pc_batch), batch_gt_poses, pc_origin, scene_id

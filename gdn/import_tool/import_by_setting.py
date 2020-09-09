@@ -160,10 +160,7 @@ def import_model_by_setting(config, mode='train'):
     parallel_model = nn.DataParallel(base_model)
 
     if config['optimizer'] == 'adam':
-        if not ('tune_task_weights' in config and config['tune_task_weights']):
-            optimizer = optim.Adam(parallel_model.parameters(), lr=config['learning_rate'])
-        else:
-            optimizer = optim.Adam(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'])
+        optimizer = optim.Adam(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'])
     else:
         raise NotImplementedError("Not support %s now."%config['optimizer'])
 

@@ -20,6 +20,11 @@ from gdn import import_model_by_setting
 import importlib
 import copy
 from argparse import ArgumentParser
+from prefetch_generator import BackgroundGenerator
+
+class DataLoaderX(DataLoader):
+    def __iter__(self):
+        return BackgroundGenerator(super().__iter__(), max_prefetch=3)
 
 def parse_args():
     parser = ArgumentParser()
@@ -30,8 +35,7 @@ def parse_args():
 if __name__ == '__main__':
     # In[14]:
     import torch.multiprocessing as mp
-    #mp.set_start_method('spawn', force=True)
-    mp.set_start_method('forkserver', force=True)
+    mp.set_start_method('spawn', force=True)
 
     args = parse_args()
 
@@ -44,12 +48,13 @@ if __name__ == '__main__':
     representation, dataset, my_collate_fn, base_model, model, optimizer, loss_function = import_model_by_setting(config)
     dataset.train()
     my_collate_fn.train()
-    dataloader = DataLoader(dataset,
+    dataloader = DataLoaderX(dataset,
                             batch_size=config['batch_size'],
                             num_workers=config['num_workers_dataloader'],
                             pin_memory=True,
                             shuffle=True,
                             collate_fn=my_collate_fn)
+    config = dataset.get_config()
 
     print('Num trainable params: %d'%count_parameters(base_model))
 
