@@ -37,6 +37,19 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.euler_scene import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
+    elif config['representation'] == 'kde':
+        from ..representation.kde import KDERepresentation, MultiTaskLossWrapper
+        from ..representation.kde.activation import KDEActivation as ActivationLayer
+        representation = KDERepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if mode == 'train':
+            from ..representation.kde import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.kde import GraspDatasetVal, collate_fn_setup_val
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 'euler_scene_rp':
         from ..representation.euler_scene_rp import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_rp.activation import EulerActivation as ActivationLayer
