@@ -2,7 +2,9 @@ from ..baseclass import AbstractRepresentation
 from ...utils import rotation_euler, hand_match, generate_gripper_edge, crop_index
 import numpy as np
 import numba as nb
+import scipy
 from scipy.spatial.transform import Rotation
+from scipy.spatial import KDTree
 
 
 class KDERepresentation(AbstractRepresentation):
@@ -34,7 +36,38 @@ class KDERepresentation(AbstractRepresentation):
         raise NotImplementedError("We don't need this function here.")
 
     def retrive_from_feature_volume_batch(self, poses, **kwargs):
-        raise NotImplementedError("Not implement yet!")
+        batch_poses = []
+        for b in range(len(poses)):
+            batch_poses.append(self.retrive_from_feature_volume(poses[b], **kwargs))
+        return batch_poses
+
+    def retrive_from_feature_volume(self, poses, n_poses=100, **kwargs):
+        p = np.asarray(poses, dtype=np.float32).reshape(-1, 9)
+        rxy = p[:,:6].reshape(-1, 3, 2) # normalized (N', 3, 2)
+        t = p[:,6:].reshape(-1, 3, 1) # (N', 3, 1)
+        rz = np.cross(rxy[:,:,0], rxy[:,:,1], axis=1)[...,np.newaxis] # (N', 3) -> (N', 3, 1)
+        poses_mat = np.concatenate((rxy, rz, t), axis=2) # (N', 3, 4)
+        kernel_density = np.zeros(p.shape[0], dtype=np.float32)
+        p_cov = np.cov(p.T) # (9, 9)
+        U,S,V = np.linalg.svd(p_cov)
+        eps = 1e-5
+        # (b.T@a.T).T == a@b
+        zca = np.dot(U, np.dot(np.diag(1.0/np.sqrt(S+eps)), U.T)).T
+        p_uncorr = np.dot(p, zca) # (-1, 9)
+        kdtree = KDTree(p_uncorr)
+        dist, inds = kdtree.query(p_uncorr, 10, p=2)
+        for d, ind in zip(dist, inds):
+            is_inf = d>2e10
+            d = d[~is_inf]
+            ind = ind[~is_inf]
+            s = np.exp(-(d*d) / 2.0)
+            kernel_density[ind] += s
+        new_poses = []
+        for i in np.argsort(-kernel_density):
+            if i == n_poses:
+                break
+            new_poses.append((kernel_density[i], poses_mat[i]))
+        return new_poses
 
     def filter_out_invalid_grasp_batch(self, pts, poses):
         new_poses = []

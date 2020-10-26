@@ -86,18 +86,20 @@ class GraspDataset(Dataset):
             cache_label_path = self.cache_path + ("/%s-label-%d.p"%(mode, item_idx))
         # Check if the pre-computed results exist
         if os.path.exists(cache_data_path) and os.path.exists(cache_label_path):
-            gc.disable()
-            with open(cache_data_path, "rb") as fp:
-                data = pickle.load(fp)
-            with open(cache_label_path, "rb") as fp:
-                label = pickle.load(fp)
-            gc.enable()
-            # Integrity check
-            if data['id'] == id_ and label['id'] == id_ and\
-               data['d_uuid'] == self.dataset_uuid and\
-               label['d_uuid'] == self.dataset_uuid:
-                return data['content'], label['content']
-        # raise RuntimeError("You shall not pass!!!")  #  TODO: REMOVE ME!!!
+            try:
+                gc.disable()
+                with open(cache_data_path, "rb") as fp:
+                    data = pickle.load(fp)
+                with open(cache_label_path, "rb") as fp:
+                    label = pickle.load(fp)
+                gc.enable()
+                # Integrity check
+                if data['id'] == id_ and label['id'] == id_ and\
+                   data['d_uuid'] == self.dataset_uuid and\
+                   label['d_uuid'] == self.dataset_uuid:
+                    return data['content'], label['content']
+            except Exception as e:
+                sys.stderr.write('Error: '+str(e)+'\n')
         config = self.config
         pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
         hand_poses = np.load(self.label_path + '/' + id_) # (N, 3, 4)
@@ -223,12 +225,20 @@ class collate_fn_setup(object):
         representation = self.representation
         pc_batch, poses_batch = zip(*batch)
         pc_batch = np.stack(pc_batch).astype(np.float32)
-        batch_gt_poses = np.stack(poses_batch).astype(np.float32) # (B, N, 3, 4)
+        max_length = max(len(p) for p in poses_batch)
+        mask = np.zeros((len(poses_batch), max_length), dtype=np.bool)
+        batch_gt_poses = np.zeros((len(poses_batch), max_length, 3, 4), dtype=np.float32)
+        for i in range(len(poses_batch)):
+            p = np.asarray(poses_batch[i])
+            l = len(p)
+            batch_gt_poses[i,:l,:,:] = p[:l,:,:]
+            mask[i,:l] = True
+
         B, N = batch_gt_poses.shape[:2]
         d6 = batch_gt_poses[:,:,:,:2].reshape((B, N, 6)) # (B, N, 3, 2) -> (B, N, 6)
         trans = batch_gt_poses[:,:,:,3:4].reshape((B, N, 3)) # (B, N, 3, 1) -> (B, N, 3)
         d9 = np.append(d6, trans, axis=-1) # (B, N, 9)
-        return torch.FloatTensor(pc_batch), torch.FloatTensor(d9), batch_gt_poses
+        return torch.FloatTensor(pc_batch), torch.FloatTensor(d9), poses_batch, torch.BoolTensor(mask)
 
 class GraspDatasetVal(Dataset):
     def __init__(self, config, **kwargs):

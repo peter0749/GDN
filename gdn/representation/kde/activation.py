@@ -38,7 +38,7 @@ class KDEActivation(nn.Module):
         # featurefeature_volume_batch shape: (B, N, 9): -> rot_6d(6), translation(3)
         B = x.size(0)
         N = x.size(1)
-        rot_6d = normalizeD6(x[...,:6]) # (B*N, 3, 2)
+        rot_6d = normalizeD6(x[...,:6].view(-1, 6)) # (B*N, 3, 2)
         trans  = x[...,6:9] # (B, N, 3)
         if self.return_mtx:
             rot_9d = cvtD6SO3(rot_6d).reshape(B, N, 3, 3) # (B, N, 3, 3)
