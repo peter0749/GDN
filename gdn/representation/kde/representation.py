@@ -1,10 +1,11 @@
+import sys
 from ..baseclass import AbstractRepresentation
 from ...utils import rotation_euler, hand_match, generate_gripper_edge, crop_index
 import numpy as np
 import numba as nb
 import scipy
 from scipy.spatial.transform import Rotation
-from scipy.spatial import KDTree
+from pykdtree.kdtree import KDTree
 
 
 class KDERepresentation(AbstractRepresentation):
@@ -41,8 +42,8 @@ class KDERepresentation(AbstractRepresentation):
             batch_poses.append(self.retrive_from_feature_volume(poses[b], **kwargs))
         return batch_poses
 
-    def retrive_from_feature_volume(self, poses, n_poses=100, **kwargs):
-        p = np.asarray(poses, dtype=np.float32).reshape(-1, 9)
+    def retrive_from_feature_volume(self, poses, n_output=100, **kwargs):
+        p = np.asarray(poses[:n_output], dtype=np.float32).reshape(-1, 9)
         rxy = p[:,:6].reshape(-1, 3, 2) # normalized (N', 3, 2)
         t = p[:,6:].reshape(-1, 3, 1) # (N', 3, 1)
         rz = np.cross(rxy[:,:,0], rxy[:,:,1], axis=1)[...,np.newaxis] # (N', 3) -> (N', 3, 1)
@@ -55,17 +56,15 @@ class KDERepresentation(AbstractRepresentation):
         zca = np.dot(U, np.dot(np.diag(1.0/np.sqrt(S+eps)), U.T)).T
         p_uncorr = np.dot(p, zca) # (-1, 9)
         kdtree = KDTree(p_uncorr)
-        dist, inds = kdtree.query(p_uncorr, 10, p=2)
+        dist, inds = kdtree.query(p_uncorr, 10)
         for d, ind in zip(dist, inds):
-            is_inf = d>2e10
-            d = d[~is_inf]
-            ind = ind[~is_inf]
-            s = np.exp(-(d*d) / 2.0)
+            is_valid = np.logical_and(d<2e10, ind<len(p_uncorr))
+            d = d[is_valid]
+            ind = ind[is_valid]
+            s = np.exp(-(d*d) / 2.0) # add a gaussian onto data points
             kernel_density[ind] += s
         new_poses = []
         for i in np.argsort(-kernel_density):
-            if i == n_poses:
-                break
             new_poses.append((kernel_density[i], poses_mat[i]))
         return new_poses
 
