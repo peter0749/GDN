@@ -130,9 +130,6 @@ if __name__ == '__main__':
                 torch.save({
                     'base_model': base_model.state_dict(),
                     'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
-                    'tpr_2': tpr_2,
-                    'mAP': mean_mAP,
-                    'best_tpr2': best_tpr2,
                     'optimizer_state': optimizer.state_dict(),
                     'epoch': e,
                     }, config['logdir']+'/ckpt/w-%d.pth'%e)
