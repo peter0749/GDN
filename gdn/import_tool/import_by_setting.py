@@ -165,6 +165,9 @@ def import_model_by_setting(config, mode='train'):
     elif config['backbone'] == 'pointnet2_s4g':
         from ..detector.pointnet2_s4g.backbone import Pointnet2MSG
         base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
+    elif config['backbone'] == 'pointnet2_kde':
+        from ..detector.pointnet2_kde.backbone import Pointnet2MSG
+        base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'edgeconv':
         from ..detector.edgeconv.backbone import EdgeDet
         base_model = EdgeDet(config, activation_layer=model_output_layer).cuda()

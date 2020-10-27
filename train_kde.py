@@ -76,6 +76,8 @@ if __name__ == '__main__':
 
     for e in range(start_epoch,1+epochs):
         loss_epoch = 0.0
+        inter_l_epoch = 0.0
+        outer_l_epoch = 0.0
         n_iter = 0
         model.train()
         my_collate_fn.train()
@@ -91,20 +93,28 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             pred = model(pc.cuda())
-            loss = loss_function(pred, volume.cuda(), mask.cuda())
+            loss, inter_l, outer_l = loss_function(pred, volume.cuda(), mask.cuda())
             loss.backward()
             optimizer.step()
             n_iter += 1
             loss_epoch += loss.item()
-            pbar.set_description('[%d/%d][%d/%d]: loss: %.4f '%(e, epochs, n_iter, len(dataloader), loss.item()))
+            inter_l_epoch += inter_l
+            outer_l_epoch += outer_l
+            pbar.set_description('[%d/%d][%d/%d]: loss: %.4f inter: %.4f outer: %.4f   '%(e, epochs, n_iter, len(dataloader), loss.item(), inter_l, outer_l))
             pbar.update(1)
             write_hwstat(config['logdir'])
 
         loss_epoch /= n_iter
+        inter_l_epoch /= n_iter
+        outer_l_epoch /= n_iter
         logger.add_scalar('train/loss', loss_epoch, e)
+        logger.add_scalar('train/inter', inter_l_epoch, e)
+        logger.add_scalar('train/outer', outer_l_epoch, e)
 
         if e % config['eval_freq'] == 0:
             loss_epoch = 0.0
+            inter_l_epoch = 0.0
+            outer_l_epoch = 0.0
             n_iter = 0
             model.eval()
             my_collate_fn.eval()
@@ -119,13 +129,19 @@ if __name__ == '__main__':
                         batch_iterator = iter(dataloader)
                         pc, volume, gt_poses, mask = next(batch_iterator)
                     pred = model(pc.cuda())
-                    loss = loss_function(pred, volume.cuda(), mask.cuda())
+                    loss, inter_l, outer_l = loss_function(pred, volume.cuda(), mask.cuda())
                     n_iter += 1
                     loss_epoch += loss.item()
+                    inter_l_epoch += inter_l
+                    outer_l_epoch += outer_l
                     write_hwstat(config['logdir'])
 
                 loss_epoch /= n_iter
+                inter_l_epoch /= n_iter
+                outer_l_epoch /= n_iter
                 logger.add_scalar('eval/loss', loss_epoch, e)
+                logger.add_scalar('eval/inter', inter_l_epoch, e)
+                logger.add_scalar('eval/outer', outer_l_epoch, e)
 
                 torch.save({
                     'base_model': base_model.state_dict(),

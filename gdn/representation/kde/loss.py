@@ -12,7 +12,7 @@ def mahalanobis_norm(x, cov_inv, mean):
     # (N', N, 1, D) x (N', N, D, D) x (N', N, D, 1) -> (N', N, 1, 1)
     return torch.squeeze(torch.matmul(torch.matmul(x_c.unsqueeze(2), cov_inv_expand), x_c.unsqueeze(3))) # (N', N)
 
-def loss_baseline(y_pred, y_true, mask, k, max_pair):
+def loss_baseline(y_pred, y_true, mask, intra_k, outer_k, max_pair):
     '''
     y_pred: (B, N, 9) -- xyz + 6d
     y_true: (B, M, 9)
@@ -36,18 +36,20 @@ def loss_baseline(y_pred, y_true, mask, k, max_pair):
     D_pairwise = y_true_expand - y_pred_expand # (B, M, N, 9)
     D_pairwise = D_pairwise[mask] # (N', N, 9)
     D_normalized = mahalanobis_norm(D_pairwise, cov_inv, y_true_mean) # (N', N)
-    # Select top-K nearest neighbors between prediction and ground truth for optimization
-    D_topK = torch.topk(D_normalized, k, largest=False, sorted=False, dim=0) # (k, N)
-    intra_loss = D_topK.values.mean()
+    # Given GT pose, find the top-K nearest predictive poses to compute loss (i.e. Push them toward GT)
+    D_topK = torch.topk(D_normalized, intra_k, largest=False, sorted=False, dim=1) # (N', k)
+    intra_loss = D_topK.values.sum(1).mean() # (N', k) -> (N',) -> scalar
 
     y_reg1_expand = y_pred.unsqueeze(1).expand(B, N, N, 9) # (B, 1, N, 9) -> (B, N, N, 9)
     y_reg2_expand = y_pred.unsqueeze(2).expand(B, N, N, 9) # (B, N, 1, 9) -> (B, N, N, 9)
     D_reg_pairwise = (y_reg1_expand - y_reg2_expand).view(B*N,N,9) # (B, N, N, 9) -> (B*N, N, 9)
     D_reg_normalized = mahalanobis_norm(D_reg_pairwise, cov_inv, y_true_mean)  # (B*N, N)
-    D_reg_topK = torch.topk(D_reg_normalized, k, largest=False, sorted=False, dim=0) # (k, N)
-    inter_loss = D_reg_topK.values.mean()
+    # Increase prediction diversity
+    D_reg_topK = torch.topk(D_reg_normalized, outer_k, largest=False, sorted=False, dim=1) # (B*N, k)
+    outer_loss = D_reg_topK.values.mean() # (B*N, k) -> scalar
 
-    return intra_loss - 0.1 * inter_loss
+    #return intra_loss - 0.01 * outer_loss, intra_loss.item(), outer_loss.item()
+    return intra_loss, intra_loss.item(), outer_loss.item()
 
 
 class MultiTaskLossWrapper(nn.Module):
@@ -55,4 +57,4 @@ class MultiTaskLossWrapper(nn.Module):
         super(MultiTaskLossWrapper, self).__init__()
         self.config = config
     def forward(self, outputs, targets, mask):
-        return loss_baseline(outputs, targets, mask, self.config['loss_topk'], self.config['loss_max_pair'])
+        return loss_baseline(outputs, targets, mask, self.config['loss_intra_k'], self.config['loss_outer_k'], self.config['loss_max_pair'])
