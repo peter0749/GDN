@@ -185,8 +185,8 @@ if __name__ == '__main__':
                     y_loss_epoch += y_loss
                     z_loss_epoch += z_loss
                     rot_loss_epoch += rot_loss
-                    pc_subsampled = pointnet2_utils.gather_operation(pc.transpose(0, 2, 1), ind)
-                    pc_subsampled = pc_subsampled.transpose(0, 2, 1).cpu().numpy()
+                    pc_subsampled = pointnet2_utils.gather_operation(pc.transpose(1, 2).contiguous(), ind)
+                    pc_subsampled = pc_subsampled.transpose(1, 2).cpu().numpy()
                     pred_poses = representation.retrive_from_feature_volume_batch(
                                 pc_subsampled,
                                 pred.detach().cpu().numpy(),
