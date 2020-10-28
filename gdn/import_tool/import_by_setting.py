@@ -37,6 +37,21 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.euler_scene import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
+    elif config['representation'] == 'euler_scene_att':
+        from ..representation.euler_scene_att import EulerRepresentation, MultiTaskLossWrapper
+        from ..representation.euler_scene_att.activation import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.euler_scene_att import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.euler_scene_att import GraspDatasetVal, collate_fn_setup_val
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 'euler_scene_rp':
         from ..representation.euler_scene_rp import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_rp.activation import EulerActivation as ActivationLayer
@@ -151,6 +166,9 @@ def import_model_by_setting(config, mode='train'):
         base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'pointnet2_s4g':
         from ..detector.pointnet2_s4g.backbone import Pointnet2MSG
+        base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
+    elif config['backbone'] == 'pointnet2_att':
+        from ..detector.pointnet2_att.backbone import Pointnet2MSG
         base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'edgeconv':
         from ..detector.edgeconv.backbone import EdgeDet
