@@ -139,11 +139,12 @@ if __name__ == '__main__':
         logger.add_scalar('train/rot_loss', rot_loss_epoch, e)
         logger.add_scalar('train/uncert', uncert_epoch, e)
 
-        logger.add_scalar('loss_weights/cls', ws[0], e)
-        logger.add_scalar('loss_weights/x', ws[1], e)
-        logger.add_scalar('loss_weights/y', ws[2], e)
-        logger.add_scalar('loss_weights/z', ws[3], e)
-        logger.add_scalar('loss_weights/rot', ws[4], e)
+        logger.add_scalar('loss_weights/foreground', ws[0], e)
+        logger.add_scalar('loss_weights/cls', ws[1], e)
+        logger.add_scalar('loss_weights/x', ws[2], e)
+        logger.add_scalar('loss_weights/y', ws[3], e)
+        logger.add_scalar('loss_weights/z', ws[4], e)
+        logger.add_scalar('loss_weights/rot', ws[5], e)
 
         if e % config['eval_freq'] == 0:
             loss_epoch = 0.0
