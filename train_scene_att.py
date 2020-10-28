@@ -100,9 +100,10 @@ if __name__ == '__main__':
                 warnings.warn('Oops! Something not right. Please check Ur Dataloader or buy more RAM :|')
                 batch_iterator = iter(dataloader)
                 pc, volume, gt_poses = next(batch_iterator)
+            pc_cuda = pc.cuda()
             optimizer.zero_grad()
 
-            pred, ind, att = model(pc.cuda())
+            pred, ind, att = model(pc_cuda)
             (loss, foreground_loss, cls_loss,
                 x_loss, y_loss, z_loss,
                 rot_loss, ws, uncert) = loss_function(pred, ind, att, volume.cuda())
@@ -173,7 +174,8 @@ if __name__ == '__main__':
                         warnings.warn('Oops! Something not right. Please check Ur Dataloader or buy more RAM :|')
                         batch_iterator = iter(dataloader)
                         pc, volume, gt_poses = next(batch_iterator)
-                    pred, ind, att = model(pc.cuda())
+                    pc_cuda = pc.cuda()
+                    pred, ind, att = model(pc_cuda)
                     (loss, foreground_loss, cls_loss,
                         x_loss, y_loss, z_loss,
                         rot_loss, ws, uncert) = loss_function(pred, ind, att, volume.cuda())
@@ -185,7 +187,7 @@ if __name__ == '__main__':
                     y_loss_epoch += y_loss
                     z_loss_epoch += z_loss
                     rot_loss_epoch += rot_loss
-                    pc_subsampled = pointnet2_utils.gather_operation(pc.transpose(1, 2).contiguous(), ind)
+                    pc_subsampled = pointnet2_utils.gather_operation(pc_cuda.transpose(1, 2).contiguous(), ind)
                     pc_subsampled = pc_subsampled.transpose(1, 2).cpu().numpy()
                     pred_poses = representation.retrive_from_feature_volume_batch(
                                 pc_subsampled,
@@ -258,5 +260,3 @@ if __name__ == '__main__':
 
     logger.close()
     pbar.close()
-
-
