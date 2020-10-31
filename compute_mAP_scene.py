@@ -83,7 +83,7 @@ def compute_match(ps, ts, pc_id, predict_prefix='', pc_prefix=None, rot_th=5.0, 
             wrist_center = center_bottom - approach * 0.05
 
             if vis_conf:
-                control_p = np.clip((n_cnt/topK)**vis_gamma, 0, 1)
+                control_p = np.clip((n_cnt/min(topK, len(ps)))**vis_gamma, 0, 1)
                 green_hsv = matplotlib.colors.rgb_to_hsv(np.array([0, 100, 0]))
                 red_hsv   = matplotlib.colors.rgb_to_hsv(np.array([255, 0, 0]))
                 s = np.asarray(np.clip(matplotlib.colors.hsv_to_rgb(control_p * red_hsv + (1.-control_p) * green_hsv), 0, 255), dtype=np.uint8)
