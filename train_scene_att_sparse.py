@@ -106,6 +106,7 @@ if __name__ == '__main__':
     for e in range(start_epoch,1+epochs):
         loss_epoch = 0.0
         foreground_loss_epoch = 0.0
+        l21_epoch = 0.0
         cls_loss_epoch = 0.0
         x_loss_epoch = 0.0
         y_loss_epoch = 0.0
@@ -124,27 +125,32 @@ if __name__ == '__main__':
                 pc, volume, gt_poses = batch_iterator.next()
             optimizer.zero_grad()
 
-            pred, ind, att = model(pc)
+            pred, ind, att, l21 = model(pc)
+            if len(l21) > 0:
+                l21 = l21[0]
             (loss, foreground_loss, cls_loss,
                 x_loss, y_loss, z_loss,
                 rot_loss, ws, uncert) = loss_function(pred, ind, att, volume)
+            loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
             loss.backward()
             optimizer.step()
             n_iter += 1
             loss_epoch += loss.item()
             foreground_loss_epoch += foreground_loss
+            l21_epoch += l21.item()
             cls_loss_epoch += cls_loss
             x_loss_epoch += x_loss
             y_loss_epoch += y_loss
             z_loss_epoch += z_loss
             rot_loss_epoch += rot_loss
             uncert_epoch += uncert.item()
-            pbar.set_description('[%d/%d][%d/%d]: loss: %.2f '%(e, epochs, n_iter, len(dataloader), loss.item()))
+            pbar.set_description('[%d/%d][%d/%d]: loss: %.2f reg: %.2f'%(e, epochs, n_iter, len(dataloader), loss.item(), l21.item()))
             pbar.update(1)
             write_hwstat(config['logdir'])
 
         loss_epoch /= n_iter
         foreground_loss_epoch /= n_iter
+        l21_epoch /= n_iter
         cls_loss_epoch /= n_iter
         x_loss_epoch /= n_iter
         y_loss_epoch /= n_iter
@@ -153,6 +159,7 @@ if __name__ == '__main__':
         uncert_epoch /= n_iter
         logger.add_scalar('train/loss', loss_epoch, e)
         logger.add_scalar('train/foreground_loss', foreground_loss_epoch, e)
+        logger.add_scalar('train/sparisity', l21_epoch, e)
         logger.add_scalar('train/cls_loss', cls_loss_epoch, e)
         logger.add_scalar('train/x_loss', x_loss_epoch, e)
         logger.add_scalar('train/y_loss', y_loss_epoch, e)
@@ -194,7 +201,7 @@ if __name__ == '__main__':
                     if pc is None:
                         batch_iterator = data_prefetcher(dataloader, device)
                         pc, volume, gt_poses = batch_iterator.next()
-                    pred, ind, att = model(pc)
+                    pred, ind, att, l21 = model(pc)
                     (loss, foreground_loss, cls_loss,
                         x_loss, y_loss, z_loss,
                         rot_loss, ws, uncert) = loss_function(pred, ind, att, volume)

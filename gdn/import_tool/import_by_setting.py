@@ -184,7 +184,10 @@ def import_model_by_setting(config, mode='train'):
         base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'pointnet2_att':
         from ..detector.pointnet2_att.backbone import Pointnet2MSG
-        base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
+        if 'l21_reg_rate' in config and config['l21_reg_rate'] > 0:
+            base_model = Pointnet2MSG(config, activation_layer=model_output_layer, return_sparsity=True).cuda()
+        else:
+            base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'edgeconv':
         from ..detector.edgeconv.backbone import EdgeDet
         base_model = EdgeDet(config, activation_layer=model_output_layer).cuda()

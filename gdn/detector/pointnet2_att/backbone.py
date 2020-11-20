@@ -45,7 +45,7 @@ class Pointnet2MSG(nn.Module):
             Whether or not to use the xyz position of a point as a feature
     """
 
-    def __init__(self, config, input_channels=0, use_xyz=True, activation_layer=None):
+    def __init__(self, config, input_channels=0, use_xyz=True, activation_layer=None, return_sparsity=False):
         super(Pointnet2MSG, self).__init__()
 
         self.config = config
@@ -54,6 +54,7 @@ class Pointnet2MSG(nn.Module):
         c_in = input_channels
         self.output_dim = self.config['output_dim']
         self.topk = self.config['output_topk']
+        self.return_sparsity = return_sparsity
         self.SA_modules.append(
             PointnetSAModuleMSG(
                 npoint=config['subsample_levels'][0],
@@ -145,4 +146,25 @@ class Pointnet2MSG(nn.Module):
         x = self.FC_layer(h_att).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
         x = x.view(x.size(0), x.size(1), *self.output_dim)
 
+        if self.return_sparsity:
+            w = self.importance_sampling.hidden[-2].weight
+            # w: (out_features, in_features) -> each output neuron
+            #                                   has $in_features groups
+            #                                   and output 1 scalar
+            # (np.sqrt(np.multiply(X, X).sum(1))).sum()
+            l21_norm = (w*w).sum(1).pow(0.5).sum()
+            return self.activation_layer(x), inds, importance, l21_norm
+
         return self.activation_layer(x), inds, importance
+
+'''
+if __name__ == '__main__':
+    import json
+    import sys
+    from gdn.representation.euler_scene_att_ce.activation import EulerActivation
+    with open(sys.argv[1], 'r') as fp:
+        config = json.load(fp)
+    m = Pointnet2MSG(config, activation_layer=EulerActivation(), return_sparsity=True).cuda()
+    p = torch.randn((1,100,3)).cuda()
+    m(p)
+'''

@@ -1,7 +1,6 @@
 import sys
 import os
 import re
-import gc
 import math
 import json
 import time
@@ -16,7 +15,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import copy
 from itertools import islice, chain
-import pickle
+#import pickle
+import h5py
 from ...utils import *
 
 # import pcl # TODO: Delete Me
@@ -78,28 +78,31 @@ class GraspDataset(Dataset):
             true_idx = int(item_idx // self.aug_size)
             aug_idx = int(item_idx % self.aug_size)
             id_ = self.labels[true_idx]
-            cache_data_path = self.cache_path + ("/%s-data-%d-%d.p"%(mode, true_idx, aug_idx))
-            cache_label_path = self.cache_path + ("/%s-label-%d-%d.p"%(mode, true_idx, aug_idx))
+            cache_data_path = self.cache_path + ("/%s-data-%d-%d.h5"%(mode, true_idx, aug_idx))
+            cache_label_path = self.cache_path + ("/%s-label-%d-%d.h5"%(mode, true_idx, aug_idx))
         else:
             id_ = self.labels[item_idx]
-            cache_data_path = self.cache_path + ("/%s-data-%d.p"%(mode, item_idx))
-            cache_label_path = self.cache_path + ("/%s-label-%d.p"%(mode, item_idx))
+            cache_data_path = self.cache_path + ("/%s-data-%d.h5"%(mode, item_idx))
+            cache_label_path = self.cache_path + ("/%s-label-%d.h5"%(mode, item_idx))
         # Check if the pre-computed results exist
         if os.path.exists(cache_data_path) and os.path.exists(cache_label_path):
             try:
-                gc.disable()
-                with open(cache_data_path, "rb") as fp:
-                    data = pickle.load(fp)
-                with open(cache_label_path, "rb") as fp:
-                    label = pickle.load(fp)
-                gc.enable()
-                # Integrity check
-                if data['id'] == id_ and label['id'] == id_ and\
-                   data['d_uuid'] == self.dataset_uuid and\
-                   label['d_uuid'] == self.dataset_uuid:
-                    return data['content'], label['content']
-            except:
-                pass
+                with h5py.File(cache_data_path, 'r') as f_data:
+                    with h5py.File(cache_label_path, 'r') as f_label:
+                        data_id = f_data.attrs['id']
+                        data_uuid = f_data.attrs['d_uuid']
+                        label_id = f_label.attrs['id']
+                        label_uuid = f_label.attrs['d_uuid']
+                        if data_id == id_ and label_id == id_ and\
+                           data_uuid == str(self.dataset_uuid) and\
+                           label_uuid == str(self.dataset_uuid):
+                               ind_len = int(f_label.attrs['ind_len'])
+                               return f_data['pointcloud'][:],\
+                                      f_label['poses'][:],\
+                                      [ list(f_label['indices/%d'%i]) for i in range(ind_len) ]
+            except Exception as e:
+                sys.stderr.write("HDF5 I/O ERROR (%s)\n"%str(e))
+                #pass
         # raise RuntimeError("You shall not pass!!!")  #  TODO: REMOVE ME!!!
         config = self.config
         pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
@@ -174,7 +177,8 @@ class GraspDataset(Dataset):
                                                      replace=False)]
         else: # <=
             np.random.shuffle(hand_poses)
-        pose_idx_pairs = []
+        poses_list = None
+        enclosed_pts_list = []
         for pose in hand_poses:
             ### Do preprocessing, augmentation here ###
             gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
@@ -205,17 +209,26 @@ class GraspDataset(Dataset):
             enclosed_pts = crop_index(pc_scene, gripper_outer1, gripper_outer2)
             if len(enclosed_pts)==0:
                 continue
-            pose_idx_pairs.append((pose, set(enclosed_pts)))
+            if poses_list is None:
+                poses_list = pose[np.newaxis]
+            else:
+                poses_list = np.append(poses_list, pose[np.newaxis], axis=0) # (N, 3, 4)
+            enclosed_pts_list.append(np.array(list(set(enclosed_pts)), dtype=np.int32)) # (N,)
 
         # Write the results to cache
-        gc.disable()
-        with open(cache_data_path, "wb") as fp:
-            pickle.dump({'id': id_, 'd_uuid': self.dataset_uuid, 'content': pc_scene}, fp)
-        with open(cache_label_path, "wb") as fp:
-            pickle.dump({'id': id_, 'd_uuid': self.dataset_uuid, 'content': pose_idx_pairs}, fp)
-        gc.enable()
+        with h5py.File(cache_data_path, "w") as f:
+            f.create_dataset('pointcloud', data=pc_scene, maxshape=pc_scene.shape, chunks=True)
+            f.attrs['id'] = id_
+            f.attrs['d_uuid'] = str(self.dataset_uuid)
+        with h5py.File(cache_label_path, "w") as f:
+            f.create_dataset('poses', data=poses_list, maxshape=poses_list.shape, chunks=True)
+            for i in range(len(enclosed_pts_list)):
+                f.create_dataset('indices/%d'%i, data=enclosed_pts_list[i], chunks=None)
+            f.attrs['ind_len'] = len(enclosed_pts_list)
+            f.attrs['id'] = id_
+            f.attrs['d_uuid'] = str(self.dataset_uuid)
 
-        return pc_scene, pose_idx_pairs
+        return pc_scene, poses_list, enclosed_pts_list
 
 class collate_fn_setup(object):
     def __init__(self, config, representation):
@@ -229,20 +242,17 @@ class collate_fn_setup(object):
     def __call__(self, batch):
         config = self.config
         representation = self.representation
-        pc_batch, pose_idx_pairs_batch = zip(*batch)
+        pc_batch, pose_batch, enclosed_pt_batch = zip(*batch)
         pc_batch = np.stack(pc_batch).astype(np.float32)
         input_points = pc_batch.shape[1]
-        feature_volume_batch = np.zeros((len(pose_idx_pairs_batch), input_points,
+        feature_volume_batch = np.zeros((pc_batch.shape[0], input_points,
                                        config['n_pitch'],
                                        config['n_yaw'],
                                        8), dtype=np.float32)
-        batch_gt_poses = []
-
-        for b in range(len(pose_idx_pairs_batch)):
-            for n, (pose, ind) in enumerate(pose_idx_pairs_batch[b]):
+        for b in range(pc_batch.shape[0]):
+            for n, (pose, ind) in enumerate(zip(pose_batch[b], enclosed_pt_batch[b])):
                 if len(ind)==0:
                     continue
-                ind = list(ind)
                 (xyz,
                  roll,
                  pitch_index,
@@ -252,9 +262,7 @@ class collate_fn_setup(object):
                  pc_batch[b,:], # shape: (N, 3)
                  ind)
                 representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
-            if len(pose_idx_pairs_batch[b])>0:
-                batch_gt_poses.append( next(zip(*pose_idx_pairs_batch[b]))  )
-        return torch.FloatTensor(pc_batch), torch.FloatTensor(feature_volume_batch), batch_gt_poses
+        return torch.FloatTensor(pc_batch), torch.FloatTensor(feature_volume_batch), pose_batch
 
 class GraspDatasetVal(Dataset):
     def __init__(self, config, **kwargs):
