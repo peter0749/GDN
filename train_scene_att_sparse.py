@@ -126,8 +126,7 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             pred, ind, att, l21 = model(pc)
-            if len(l21) > 0:
-                l21 = l21[0]
+            l21 = l21.mean()
             (loss, foreground_loss, cls_loss,
                 x_loss, y_loss, z_loss,
                 rot_loss, ws, uncert) = loss_function(pred, ind, att, volume)
