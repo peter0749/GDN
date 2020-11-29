@@ -54,6 +54,7 @@ class Pointnet2MSG(nn.Module):
         c_in = input_channels
         self.output_dim = self.config['output_dim']
         self.topk = self.config['output_topk']
+        self.tau = self.config['reg_tau']
         self.return_sparsity = return_sparsity
         self.SA_modules.append(
             PointnetSAModuleMSG(
@@ -147,15 +148,16 @@ class Pointnet2MSG(nn.Module):
         x = x.view(x.size(0), x.size(1), *self.output_dim)
 
         if self.return_sparsity:
-            w = self.importance_sampling.hidden[-2].weight
-            # w: (out_features, in_features) -> each output neuron
-            #                                   has $in_features groups
-            #                                   and output 1 scalar
-            w_norm = (w*w).sum(1, keepdim=True).pow(0.5) # (out_features, 1)
-            w_n = w / w_norm # Normalized W: (out_features, in_features) / (out_features, 1)
-            feature_correlation = torch.mm(w_n, w_n.T) # (out_features, out_features)
-            diversity = (1.0 - feature_correlation * (1.0 - torch.eye(w.size(0), w.size(0), dtype=w.dtype, device=w.device))).sum()
-            return self.activation_layer(x), inds, importance, diversity
+            '''
+            W: (out_features, in_features) -> each output neuron
+                                              has $in_features groups
+                                              and output 1 scalar
+            Pengtao Xie, Hongbao Zhang, Yichen Zhu, Eric Xing ; Proceedings of the 35th International Conference on Machine Learning, PMLR 80:5413-5422, 2018.
+            '''
+            W = self.importance_sampling.hidden[-2].weight
+            kernel = torch.mm(W, W.T) # (out_features, out_features)
+            f_W = (torch.trace(kernel) - torch.log(torch.det(kernel)+1e-8)) + self.tau * torch.norm(W, p=1)
+            return self.activation_layer(x), inds, importance, f_W
 
         return self.activation_layer(x), inds, importance
 
