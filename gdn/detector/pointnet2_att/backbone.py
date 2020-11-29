@@ -151,9 +151,11 @@ class Pointnet2MSG(nn.Module):
             # w: (out_features, in_features) -> each output neuron
             #                                   has $in_features groups
             #                                   and output 1 scalar
-            # (np.sqrt(np.multiply(X, X).sum(1))).sum()
-            l21_norm = (w*w).sum(1).pow(0.5).sum()
-            return self.activation_layer(x), inds, importance, l21_norm
+            w_norm = (w*w).sum(1, keepdim=True).pow(0.5) # (out_features, 1)
+            w_n = w / w_norm # Normalized W: (out_features, in_features) / (out_features, 1)
+            feature_correlation = torch.mm(w_n, w_n.T) # (out_features, out_features)
+            diversity = (1.0 - feature_correlation * (1.0 - torch.eye(w.size(0), w.size(0), dtype=w.dtype, device=w.device))).sum()
+            return self.activation_layer(x), inds, importance, diversity
 
         return self.activation_layer(x), inds, importance
 
