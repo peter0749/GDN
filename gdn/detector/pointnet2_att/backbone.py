@@ -153,9 +153,10 @@ class Pointnet2MSG(nn.Module):
             #                                   and output 1 scalar
             w_norm = (w*w).sum(1, keepdim=True).pow(0.5) # (out_features, 1)
             w_n = w / w_norm # Normalized W: (out_features, in_features) / (out_features, 1)
-            feature_correlation = torch.mm(w_n, w_n.T) # (out_features, out_features)
-            diversity = (1.0 - feature_correlation * (1.0 - torch.eye(w.size(0), w.size(0), dtype=w.dtype, device=w.device))).sum()
-            return self.activation_layer(x), inds, importance, diversity
+            feature_correlation = torch.mm(w_n, w_n.T) # (out_features, out_features), higher -> more similar [-1, +1]
+            feature_correlation_no_self = feature_correlation * (1.0 - torch.eye(w.size(0), w.size(0), dtype=w.dtype, device=w.device)) # remove self-correlation: [-1, +1]
+            similarity = (feature_correlation_no_self).sum() # We want to minimize the similarity between weights to increase diversity: [-1, +1]
+            return self.activation_layer(x), inds, importance, similarity
 
         return self.activation_layer(x), inds, importance
 
