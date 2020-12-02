@@ -54,9 +54,9 @@ class Pointnet2MSG(nn.Module):
         c_in = input_channels
         self.output_dim = self.config['output_dim']
         self.topk = self.config['output_topk']
-        self.I_epsilon = 0.001
+        self.I_epsilon = 1e-5
         self.g_sigma2 = 0.02
-        # self.DPP_sample = self.config['DPP_sample']
+        self.DPP_sample = self.config['DPP_sample']
         self.return_sparsity = return_sparsity
         self.SA_modules.append(
             PointnetSAModuleMSG(
@@ -162,15 +162,14 @@ class Pointnet2MSG(nn.Module):
             phi_i = p_sqrt.unsqueeze(1).expand(S.size(0), S.size(1), S.size(2)) # (B, 1->k, k)
             phi_j = p_sqrt.unsqueeze(2).expand(S.size(0), S.size(1), S.size(2)) # (B, k, 1->k)
             L = phi_i * S * phi_j # (B, k, k)
-            '''
-            detLI = torch.det(L + torch.eye(L.size(1), device=L.device, dtype=L.dtype).unsqueeze(0))
-            detLY = torch.det(L[:,:self.DPP_sample, :self.DPP_sample])
-            logDDP = torch.log((detLY+1e-8) / (detLI+1e-8))
-            '''
-            # logDDP = torch.log(torch.det(L)+1e-8)
-            # print(L)
+            e = torch.eye(L.size(1), device=L.device, dtype=L.dtype)
+            #detLI = torch.stack([torch.logdet(L[b] + e) for b in range(L.size(0))], 0)
+            #detLY = torch.stack([torch.logdet(L[b,:self.DPP_sample, :self.DPP_sample]) for b in range(L.size(0))], 0)
+            detLI = torch.logdet(L + e.unsqueeze(0))
+            detLY = torch.logdet(L[:,:self.DPP_sample, :self.DPP_sample])
+            logDDP = detLY - detLI
 
-            return self.activation_layer(x), inds, importance, L.sum(-1).sum(-1).mean() # -logDDP
+            return self.activation_layer(x), inds, importance, -logDDP.mean()
 
         return self.activation_layer(x), inds, importance
 
