@@ -54,7 +54,9 @@ class Pointnet2MSG(nn.Module):
         c_in = input_channels
         self.output_dim = self.config['output_dim']
         self.topk = self.config['output_topk']
-        self.tau = self.config['reg_tau']
+        self.I_epsilon = 0.001
+        self.g_sigma2 = 0.02
+        # self.DPP_sample = self.config['DPP_sample']
         self.return_sparsity = return_sparsity
         self.SA_modules.append(
             PointnetSAModuleMSG(
@@ -135,29 +137,40 @@ class Pointnet2MSG(nn.Module):
                 l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
             )
 
-        h = l_features[0] # (B, 128, M)
+        h = l_features[0] # (B, 128, N)
         ht = h.transpose(1, 2).contiguous()
-        importance = self.importance_sampling(ht)[...,0] # (B, M)
-        importance_topk = torch.topk(importance, self.topk, dim=1) # (B, k)
+        importance = self.importance_sampling(ht)[...,0] # (B, N)
+        importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
         inds = importance_topk.indices.int() # (B, k)
         att  = importance_topk.values  # (B, k)
         h_subsampled = pointnet2_utils.gather_operation(h, inds) # (B, 128, k)
 
-        h_att = att.unsqueeze(1) * h_subsampled # (B, 1, k) * (B, 128, k) -> (B, 128, k)
-        x = self.FC_layer(h_att).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
+        # h_att = att.unsqueeze(1) * h_subsampled # (B, 1, k) * (B, 128, k) -> (B, 128, k)
+        # x = self.FC_layer(h_att).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
+        x = self.FC_layer(h_subsampled).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
         x = x.view(x.size(0), x.size(1), *self.output_dim)
 
         if self.return_sparsity:
+            # xyz: (B, N, 3)
+            p_sub = pointnet2_utils.gather_operation(xyz.transpose(1,2).contiguous(), inds) # (B, 3, k)
+            A = p_sub.unsqueeze(2).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, 1->k, k)
+            B = p_sub.unsqueeze(3).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, k, 1->k)
+            g_similarity = torch.exp(-torch.norm(A-B, p=2, dim=1)/(2.0*self.g_sigma2)) # (B, k, k)
+            S = g_similarity + self.I_epsilon * torch.eye(g_similarity.size(1), device=g_similarity.device, dtype=g_similarity.dtype).unsqueeze(0) # To ensure positive semidefinite: (B, k, k)
+            # (B, N) -> (B, 1, N) -> (B, 1, k) -> (B, k)
+            p_sqrt = pointnet2_utils.gather_operation(importance.unsqueeze(1).contiguous(), inds)[:,0,:].pow(0.5)
+            phi_i = p_sqrt.unsqueeze(1).expand(S.size(0), S.size(1), S.size(2)) # (B, 1->k, k)
+            phi_j = p_sqrt.unsqueeze(2).expand(S.size(0), S.size(1), S.size(2)) # (B, k, 1->k)
+            L = phi_i * S * phi_j # (B, k, k)
             '''
-            W: (out_features, in_features) -> each output neuron
-                                              has $in_features groups
-                                              and output 1 scalar
-            Pengtao Xie, Hongbao Zhang, Yichen Zhu, Eric Xing ; Proceedings of the 35th International Conference on Machine Learning, PMLR 80:5413-5422, 2018.
+            detLI = torch.det(L + torch.eye(L.size(1), device=L.device, dtype=L.dtype).unsqueeze(0))
+            detLY = torch.det(L[:,:self.DPP_sample, :self.DPP_sample])
+            logDDP = torch.log((detLY+1e-8) / (detLI+1e-8))
             '''
-            W = self.importance_sampling.hidden[-2].weight
-            kernel = torch.mm(W, W.T) # (out_features, out_features)
-            f_W = (torch.trace(kernel) - torch.log(torch.det(kernel)+1e-8)) + self.tau * torch.norm(W, p=1)
-            return self.activation_layer(x), inds, importance, f_W
+            # logDDP = torch.log(torch.det(L)+1e-8)
+            # print(L)
+
+            return self.activation_layer(x), inds, importance, L.sum(-1).sum(-1).mean() # -logDDP
 
         return self.activation_layer(x), inds, importance
 

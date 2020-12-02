@@ -23,6 +23,7 @@ import importlib
 import copy
 from argparse import ArgumentParser
 
+'''
 class data_prefetcher(object):
     def __init__(self, loader, device):
         self.loader = iter(loader)
@@ -50,6 +51,7 @@ class data_prefetcher(object):
         gt = self.next_gt
         self.preload()
         return inputs, target, gt
+'''
 
 def parse_args():
     parser = ArgumentParser()
@@ -117,12 +119,14 @@ if __name__ == '__main__':
         model.train()
         my_collate_fn.train()
         dataset.train()
-        batch_iterator = data_prefetcher(dataloader, device)
+        batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
         for _ in range(len(dataloader)):
-            pc, volume, gt_poses = batch_iterator.next()
+            pc, volume, gt_poses = next(batch_iterator)
             if pc is None:
-                batch_iterator = data_prefetcher(dataloader, device)
-                pc, volume, gt_poses = batch_iterator.next()
+                batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
+                pc, volume, gt_poses = next(batch_iterator)
+            pc = pc.cuda()
+            volume = volume.cuda()
             optimizer.zero_grad()
 
             pred, ind, att, l21 = model(pc)
@@ -193,13 +197,15 @@ if __name__ == '__main__':
             model.eval()
             my_collate_fn.eval()
             dataset.eval()
-            batch_iterator = data_prefetcher(dataloader, device)
+            batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
             with torch.no_grad():
                 for _ in tqdm(range(len(dataloader))):
-                    pc, volume, gt_poses = batch_iterator.next()
+                    pc, volume, gt_poses = next(batch_iterator)
                     if pc is None:
-                        batch_iterator = data_prefetcher(dataloader, device)
-                        pc, volume, gt_poses = batch_iterator.next()
+                        batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
+                        pc, volume, gt_poses = next(batch_iterator)
+                    pc = pc.cuda()
+                    volume = volume.cuda()
                     pred, ind, att, l21 = model(pc)
                     (loss, foreground_loss, cls_loss,
                         x_loss, y_loss, z_loss,

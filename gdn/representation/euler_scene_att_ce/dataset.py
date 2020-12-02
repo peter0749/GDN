@@ -221,6 +221,8 @@ class GraspDataset(Dataset):
             f.attrs['id'] = id_
             f.attrs['d_uuid'] = str(self.dataset_uuid)
         with h5py.File(cache_label_path, "w") as f:
+            if poses_list is None or len(poses_list) == 0:
+                poses_list = np.array([], dtype=np.float32)
             f.create_dataset('poses', data=poses_list, maxshape=poses_list.shape, chunks=True)
             for i in range(len(enclosed_pts_list)):
                 f.create_dataset('indices/%d'%i, data=enclosed_pts_list[i], chunks=None)
