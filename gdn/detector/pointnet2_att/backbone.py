@@ -56,7 +56,8 @@ class Pointnet2MSG(nn.Module):
         self.topk = self.config['output_topk']
         self.I_epsilon = 1e-5
         self.g_sigma2 = 0.02
-        self.DPP_sample = self.config['DPP_sample']
+        self.DPP_L_size = self.config['DPP_L_size']
+        self.DPP_Y_size = self.config['DPP_Y_size']
         self.return_sparsity = return_sparsity
         self.SA_modules.append(
             PointnetSAModuleMSG(
@@ -152,21 +153,23 @@ class Pointnet2MSG(nn.Module):
 
         if self.return_sparsity:
             # xyz: (B, N, 3)
-            p_sub = pointnet2_utils.gather_operation(xyz.transpose(1,2).contiguous(), inds) # (B, 3, k)
+            ind_sub = pointnet2_utils.furthest_point_sample(xyz, self.DPP_L_size)
+            p_sub = pointnet2_utils.gather_operation(xyz.transpose(1,2).contiguous(), ind_sub) # (B, 3, k)
+            a_sub = pointnet2_utils.gather_operation(importance.unsqueeze(1), ind_sub)[:,0,:].pow(0.5) # (B, k)
+            a_argsort = torch.argsort(a_sub, dim=1, descending=True).int() # (B, k)
+            p_sub = pointnet2_utils.gather_operation(p_sub, a_argsort) # (B, 3, k), sorted
+            a_sub = pointnet2_utils.gather_operation(a_sub.unsqueeze(1), a_argsort)[:,0,:] # (B, k), sorted
             A = p_sub.unsqueeze(2).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, 1->k, k)
             B = p_sub.unsqueeze(3).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, k, 1->k)
             g_similarity = torch.exp(-torch.norm(A-B, p=2, dim=1)/(2.0*self.g_sigma2)) # (B, k, k)
             S = g_similarity + self.I_epsilon * torch.eye(g_similarity.size(1), device=g_similarity.device, dtype=g_similarity.dtype).unsqueeze(0) # To ensure positive semidefinite: (B, k, k)
             # (B, N) -> (B, 1, N) -> (B, 1, k) -> (B, k)
-            p_sqrt = pointnet2_utils.gather_operation(importance.unsqueeze(1).contiguous(), inds)[:,0,:].pow(0.5)
-            phi_i = p_sqrt.unsqueeze(1).expand(S.size(0), S.size(1), S.size(2)) # (B, 1->k, k)
-            phi_j = p_sqrt.unsqueeze(2).expand(S.size(0), S.size(1), S.size(2)) # (B, k, 1->k)
+            phi_i = a_sub.unsqueeze(1).expand(S.size(0), S.size(1), S.size(2)) # (B, 1->k, k)
+            phi_j = a_sub.unsqueeze(2).expand(S.size(0), S.size(1), S.size(2)) # (B, k, 1->k)
             L = phi_i * S * phi_j # (B, k, k)
             e = torch.eye(L.size(1), device=L.device, dtype=L.dtype)
-            #detLI = torch.stack([torch.logdet(L[b] + e) for b in range(L.size(0))], 0)
-            #detLY = torch.stack([torch.logdet(L[b,:self.DPP_sample, :self.DPP_sample]) for b in range(L.size(0))], 0)
             detLI = torch.logdet(L + e.unsqueeze(0))
-            detLY = torch.logdet(L[:,:self.DPP_sample, :self.DPP_sample])
+            detLY = torch.logdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
             logDDP = detLY - detLI
 
             return self.activation_layer(x), inds, importance, -logDDP.mean()
