@@ -218,7 +218,9 @@ class MetaLearner(nn.Module):
         Y = torch.cat((torch.zeros(q_query, s.size(1), dtype=s.dtype, device=s.device), s), 0)
         # (Q+S, Q+S) x (Q+S, ndim_output) -> (Q+S, ndim_output)
         W = torch.eye(W.size(0), dtype=W.dtype, device=W.device) - self.lp_alpha * W
-        W_inv = W.T.mm(W).inverse().mm(W.T)
+        u = torch.cholesky(W)
+        W_inv = torch.cholesky_inverse(u)
+        #W_inv = W.T.mm(W).inverse().mm(W.T)
         Z = torch.mm(W_inv, Y)
         # The final output
         x = Z[:q_query].reshape(b_query, k_query, *self.output_dim)
