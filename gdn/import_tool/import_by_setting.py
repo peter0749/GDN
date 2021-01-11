@@ -1,4 +1,5 @@
 import copy
+import torch
 import torch.nn as nn
 import torch.optim as optim
 from ..detector.utils import freeze_model, unfreeze_model
@@ -239,6 +240,8 @@ def import_model_by_setting(config, mode='train'):
             base_model = MetaLearner(config, activation_layer=model_output_layer, return_sparsity=True).cuda()
         else:
             base_model = MetaLearner(config, activation_layer=model_output_layer).cuda()
+        if 'backbone_weights' in config:
+            base_model.backbone.load_state_dict(torch.load(config['backbone_weights']), strict=False)
     elif config['backbone'] == 'edgeconv':
         from ..detector.edgeconv.backbone import EdgeDet
         base_model = EdgeDet(config, activation_layer=model_output_layer).cuda()
