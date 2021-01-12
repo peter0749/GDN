@@ -78,7 +78,7 @@ def import_model_by_setting(config, mode='train'):
             freeze_model(loss)
         if mode == 'train':
             from ..representation.euler_scene_att_ce_meta import GraspDataset, collate_fn_setup
-            dataset_query = GraspDataset(config, max_sample_grasp=config["max_sample_grasp"], use_cache=True)
+            dataset_query = GraspDataset(config, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
             dataset_support = GraspDataset(config, max_sample_grasp=config["n_support_grasp"], use_cache=False)
             dataset = (dataset_query, dataset_support)
             my_collate_fn = collate_fn_setup(config, representation)

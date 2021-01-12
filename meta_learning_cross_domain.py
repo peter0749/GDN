@@ -55,9 +55,10 @@ if __name__ == '__main__':
         os.makedirs(config['logdir']+'/ckpt')
 
     representation, dataset, my_collate_fn, base_model, model, optimizer, loss_function = import_model_by_setting(config)
-    dataset_query, dataset_support = dataset
+    dataset_query, dataset_support_in_eval, dataset_support = dataset
     device = next(base_model.parameters()).device
     dataset_query.train()
+    dataset_support_in_eval.train() # always train mode
     dataset_support.train()
     my_collate_fn.train()
     dataloader_query = DataLoader(dataset_query,
@@ -67,6 +68,12 @@ if __name__ == '__main__':
                             shuffle=True,
                             collate_fn=my_collate_fn)
     dataloader_support = DataLoader(dataset_support,
+                            batch_size=config['support_batch_size'],
+                            num_workers=config['num_workers_dataloader'],
+                            pin_memory=False,
+                            shuffle=True,
+                            collate_fn=my_collate_fn)
+    dataloader_support_in_eval = DataLoader(dataset_support_in_eval,
                             batch_size=config['support_batch_size'],
                             num_workers=config['num_workers_dataloader'],
                             pin_memory=False,
@@ -107,6 +114,27 @@ if __name__ == '__main__':
             "Train/Y_normalized_loss_q",
             "Train/Z_normalized_loss_q",
             "Train/Rotation_loss_q",
+            "Train/Loss_s",
+            "Train/Foreground_s",
+            "Train/Coarse_rotation_s",
+            "Train/X_normalized_loss_s",
+            "Train/Y_normalized_loss_s",
+            "Train/Z_normalized_loss_s",
+            "Train/Rotation_loss_s",
+            "Train/Loss_qq",
+            "Train/Foreground_qq",
+            "Train/Coarse_rotation_qq",
+            "Train/X_normalized_loss_qq",
+            "Train/Y_normalized_loss_qq",
+            "Train/Z_normalized_loss_qq",
+            "Train/Rotation_loss_qq",
+            "Train/Loss_ss",
+            "Train/Foreground_ss",
+            "Train/Coarse_rotation_ss",
+            "Train/X_normalized_loss_ss",
+            "Train/Y_normalized_loss_ss",
+            "Train/Z_normalized_loss_ss",
+            "Train/Rotation_loss_ss",
         ]
         info = np.zeros(len(info_namespace)+1, dtype=np.float32)
         model.train()
@@ -132,12 +160,29 @@ if __name__ == '__main__':
 
             # pseudo-label probagation: support -> query
             pred_q, ind_q, att_q, prototype_s, l21_q = model(pc_support, mask_support, pc_query, None)
+            # pseudo-label probagation: query -> support
+            pred_s, ind_s, att_s, prototype_q, l21_s = model(pc_query, mask_query, pc_support, None)
+            # self consistency: support -> support
+            pred_ss, ind_ss, att_ss = model(None, None, pc_support, prototype_s)[:3]
+            # self consistency: query -> query
+            pred_qq, ind_qq, att_qq = model(None, None, pc_query, prototype_q)[:3]
 
-            l21 = l21_q.mean()
+            l21 = torch.cat((l21_q.view(-1), l21_s.view(-1))).mean()
+            # Cross-Domain
             (loss_q, foreground_loss_q, cls_loss_q,
                 x_loss_q, y_loss_q, z_loss_q,
                 rot_loss_q, ws, uncert) = loss_function(pred_q, ind_q, att_q, volume_query)
-            loss = loss_q + config['l21_reg_rate'] * l21
+            (loss_s, foreground_loss_s, cls_loss_s,
+                x_loss_s, y_loss_s, z_loss_s,
+                rot_loss_s, _, _) = loss_function(pred_s, ind_s, att_s, volume_support)
+            # In-Domain (self-consistency)
+            (loss_qq, foreground_loss_qq, cls_loss_qq,
+                x_loss_qq, y_loss_qq, z_loss_qq,
+                rot_loss_qq, _, _) = loss_function(pred_qq, ind_qq, att_qq, volume_query)
+            (loss_ss, foreground_loss_ss, cls_loss_ss,
+                x_loss_ss, y_loss_ss, z_loss_ss,
+                rot_loss_ss, _, _) = loss_function(pred_ss, ind_ss, att_ss, volume_support)
+            loss = loss_q + loss_s + loss_qq + loss_ss + config['l21_reg_rate'] * l21
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=20.0, norm_type=2)
             optimizer.step()
@@ -152,9 +197,30 @@ if __name__ == '__main__':
                     y_loss_q,
                     z_loss_q,
                     rot_loss_q,
+                    loss_s.item(),
+                    foreground_loss_s,
+                    cls_loss_s,
+                    x_loss_s,
+                    y_loss_s,
+                    z_loss_s,
+                    rot_loss_s,
+                    loss_qq.item(),
+                    foreground_loss_qq,
+                    cls_loss_qq,
+                    x_loss_qq,
+                    y_loss_qq,
+                    z_loss_qq,
+                    rot_loss_qq,
+                    loss_ss.item(),
+                    foreground_loss_ss,
+                    cls_loss_ss,
+                    x_loss_ss,
+                    y_loss_ss,
+                    z_loss_ss,
+                    rot_loss_ss,
                     1
                 ],dtype=np.float32)
-            pbar.set_description('[%d/%d][%d/%d]: loss: %.2f reg: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_q.item(), l21.item()))
+            pbar.set_description('[%d/%d][%d/%d]: loss_s: %.2f loss_q: %.2f loss_ss: %.2f loss_qq: %.2f reg: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_s.item(), loss_q.item(), loss_ss.item(), loss_qq.item(), l21.item()))
             pbar.update(1)
             write_hwstat(config['logdir'])
 
@@ -180,11 +246,11 @@ if __name__ == '__main__':
             model.eval()
             my_collate_fn.eval()
             dataset_query.eval()
-            dataset_support.train() # Use GT in training data in same domain as support
+            dataset_support_in_eval.train() # Use GT in training data in same domain as support
 
             with torch.no_grad():
                 batch_iterator_query = iter(dataloader_query)
-                batch_iterator_support = iter(dataloader_support)
+                batch_iterator_support = iter(dataloader_support_in_eval)
                 for _ in tqdm(range(len(dataloader_query))):
                     # Load query data:
                     pc_query, volume_query, _, gt_poses = next(batch_iterator_query)
@@ -197,7 +263,7 @@ if __name__ == '__main__':
                     # Load support data:
                     pc_support, volume_support, support_mask, _ = next(batch_iterator_support)
                     if pc_support is None:
-                        batch_iterator_support = iter(dataloader_support)
+                        batch_iterator_support = iter(dataloader_support_in_eval)
                         pc_support, volume_support, support_mask, _ = next(batch_iterator_support)
                     pc_support = pc_support.cuda()
                     support_mask = support_mask.cuda()
