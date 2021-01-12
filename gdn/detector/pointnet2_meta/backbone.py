@@ -138,13 +138,21 @@ class MetaLearner(nn.Module):
         self.return_sparsity = return_sparsity
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
+        self.prototype_dim = 300
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 
         self.importance_sampling = ImportanceSamplingModule(128, config['att_hidden_n'])
 
-        self.FC_layer = (
+        self.prototype_att = ImportanceSamplingModule(128, [64, 64])
+        self.prototype_l = (
             pt_utils.Seq(128)
+            .conv1d(256, activation=nn.ReLU(inplace=True))
+            .conv1d(self.prototype_dim, activation=nn.ReLU(inplace=True))
+        )
+
+        self.FC_layer = (
+            pt_utils.Seq(self.prototype_dim)
             .conv1d(self.n_output_feat, activation=None)
         )
 
@@ -156,7 +164,7 @@ class MetaLearner(nn.Module):
 
         return xyz, features
 
-    def get_propotypes(self, support_pcs, support_masks, support_volume):
+    def get_propotypes(self, support_pcs, support_masks):
         # Seed selection from support set (prototype)
         x, f = self._break_up_pc(support_pcs)
         h_support = self.backbone(x, f)
@@ -167,28 +175,31 @@ class MetaLearner(nn.Module):
         support_emb = support_emb[subset]
 
         # Label generation from support set
-        if support_volume is None:
-            s = support_emb.unsqueeze(0).transpose(1, 2).contiguous() # (1, 128, S)
-            s = self.FC_layer(s)[0].T.contiguous() # (S, n_pitch*n_yaw*8)
-        else:
-            support_volume = support_volume[support_masks] # (B, N, n_pitch, n_yaw, 8) -> (S, n_pitch, n_yaw, 8)
-            support_volume = support_volume[subset] # (|subset|, n_pitch, n_yaw, 8)
-            s = support_volume.reshape(subset.size(0), self.n_output_feat) # (|subset|, -1)
+        s_us = support_emb.unsqueeze(0) # (1, S, 128)
+        # compute attention on which prototype to attent with
+        att = self.prototype_att(s_us)[0,:] # (1, S, 1) -> (S, 1)
+        s = s_us.transpose(1, 2).contiguous() # (1, 128, S)
+        # compute prototype
+        s = self.prototype_l(s)[0].T.contiguous() # (S, 300)
+        # apply attention weights
+        s = att.expand(s.size(0), self.prototype_dim) * s # (S, 300) * (S, 300)
         return support_emb, s
 
-    def forward(self, support_pcs, support_masks, support_volume, query_pc):
+    def forward(self, support_pcs, support_masks, query_pc, precomputed_support):
         # type: (Pointnet2MSG, torch.cuda.FloatTensor) -> pt_utils.Seq
         r"""
             support_pcs: A FloatTensor with shape: (Nsupport, Npoints, 3)
             support_masks: A BooleanTensor with shape: (Nsupport, Npoints)
-            support_volume: A few set of ground truth grasp poses in support set.
-                            Only used in evaluation mode.
             query_pc: A FloatTensor with shape: (B, Npoints, 3)
         """
         xyz_query, features_query = self._break_up_pc(query_pc)
         h_query = self.backbone(xyz_query, features_query) # (B, Npoints, 128)
 
-        support_emb, s = self.get_propotypes(support_pcs, support_masks, support_volume)
+        if precomputed_support is None:
+            support_emb, s = self.get_propotypes(support_pcs, support_masks)
+        else:
+            support_emb, s = precomputed_support
+        support_to_return = (support_emb, s)
 
         # Seed selection from query set
         importance = self.importance_sampling(h_query)[...,0] # (B, N)
@@ -222,8 +233,11 @@ class MetaLearner(nn.Module):
         W_inv = torch.cholesky_inverse(u)
         #W_inv = W.T.mm(W).inverse().mm(W.T)
         Z = torch.mm(W_inv, Y)
-        # The final output
-        x = Z[:q_query].reshape(b_query, k_query, *self.output_dim)
+        # Generate imtermediate results by label probagation
+        x = Z[:q_query].reshape(b_query, k_query, self.prototype_dim) # (B, k, 300)
+        # The final result
+        x = self.FC_layer(x.transpose(1, 2).contiguous()) # (B, ?, k)
+        x = x.transpose(1, 2).reshape(b_query, k_query, *self.output_dim)
 
         if self.return_sparsity:
             # xyz: (B, N, 3)
@@ -246,6 +260,6 @@ class MetaLearner(nn.Module):
             detLY = torch.logdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
             logDDP = detLY - detLI
 
-            return self.activation_layer(x), inds, importance, -logDDP.mean()
+            return self.activation_layer(x), inds, importance, support_to_return, -logDDP.mean()
 
-        return self.activation_layer(x), inds, importance
+        return self.activation_layer(x), inds, importance, support_to_return

@@ -182,7 +182,7 @@ class GraspDataset(Dataset):
                                                      replace=False)]
         else: # <=
             np.random.shuffle(hand_poses)
-        poses_list = None
+        poses_list = np.empty((0, 3, 4), dtype=np.float32)
         enclosed_pts_list = []
         for pose in hand_poses:
             ### Do preprocessing, augmentation here ###
@@ -214,10 +214,7 @@ class GraspDataset(Dataset):
             enclosed_pts = crop_index(pc_scene, gripper_outer1, gripper_outer2)
             if len(enclosed_pts)==0:
                 continue
-            if poses_list is None:
-                poses_list = pose[np.newaxis]
-            else:
-                poses_list = np.append(poses_list, pose[np.newaxis], axis=0) # (N, 3, 4)
+            poses_list = np.append(poses_list, pose[np.newaxis], axis=0) # (N, 3, 4)
             enclosed_pts_list.append(np.array(list(set(enclosed_pts)), dtype=np.int32)) # (N,)
 
         poses_list = poses_list[:self.max_sample_grasp]

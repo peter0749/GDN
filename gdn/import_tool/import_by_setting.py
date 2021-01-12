@@ -107,9 +107,10 @@ def import_model_by_setting(config, mode='train'):
             config_support['val_data'] = config['val_data_s']
             config_support['val_label'] = config['val_label_s']
 
-            dataset_query = GraspDataset(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
+            dataset_query1 = GraspDataset(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
+            dataset_query2 = GraspDataset(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
             dataset_support = GraspDataset(config_support, max_sample_grasp=config["n_support_grasp"], use_cache=False)
-            dataset = (dataset_query, dataset_support)
+            dataset = (dataset_query1, dataset_query2, dataset_support)
             my_collate_fn = collate_fn_setup(config, representation)
         else:
             raise NotImplementedError("Evaluation mode in meta learner is not implement yet.")
