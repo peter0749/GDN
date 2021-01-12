@@ -242,7 +242,12 @@ def import_model_by_setting(config, mode='train'):
         else:
             base_model = MetaLearner(config, activation_layer=model_output_layer).cuda()
         if 'backbone_weights' in config:
-            base_model.backbone.load_state_dict(torch.load(config['backbone_weights']), strict=False)
+            m = torch.load(config['backbone_weights'])
+            m = {k: v for k, v in m['base_model'].items() if k.startswith(('FP_modules', 'SA_modules'))}
+            print(base_model.backbone.load_state_dict(m, strict=False))
+            del m
+            if "freeze_backbone" in config and config["freeze_backbone"]:
+                freeze_model(base_model.backbone)
     elif config['backbone'] == 'edgeconv':
         from ..detector.edgeconv.backbone import EdgeDet
         base_model = EdgeDet(config, activation_layer=model_output_layer).cuda()

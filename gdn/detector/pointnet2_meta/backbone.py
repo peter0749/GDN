@@ -58,7 +58,7 @@ class Backbone(nn.Module):
                 nsamples=[16, 32],
                 mlps=[[c_in, 16, 16, 32], [c_in, 32, 32, 64]],
                 use_xyz=use_xyz,
-                bn=False
+                bn=self.config['use_bn']
             )
         )
         c_out_0 = 32 + 64
@@ -71,7 +71,7 @@ class Backbone(nn.Module):
                 nsamples=[16, 32],
                 mlps=[[c_in, 64, 64, 128], [c_in, 64, 96, 128]],
                 use_xyz=use_xyz,
-                bn=False
+                bn=self.config['use_bn']
             )
         )
         c_out_1 = 128 + 128
@@ -84,15 +84,15 @@ class Backbone(nn.Module):
                 nsamples=[16, 32],
                 mlps=[[c_in, 128, 256, 512], [c_in, 128, 256, 512]],
                 use_xyz=use_xyz,
-                bn=False
+                bn=self.config['use_bn']
             )
         )
         c_out_2 = 512 + 512
 
         self.FP_modules = nn.ModuleList()
-        self.FP_modules.append(PointnetFPModule(mlp=[128, 128, 128], bn=False))
-        self.FP_modules.append(PointnetFPModule(mlp=[256+c_out_0, 256, 128], bn=False))
-        self.FP_modules.append(PointnetFPModule(mlp=[c_out_2+c_out_1, 256, 256], bn=False))
+        self.FP_modules.append(PointnetFPModule(mlp=[128, 128, 128], bn=self.config['use_bn']))
+        self.FP_modules.append(PointnetFPModule(mlp=[256+c_out_0, 256, 128], bn=self.config['use_bn']))
+        self.FP_modules.append(PointnetFPModule(mlp=[c_out_2+c_out_1, 256, 256], bn=self.config['use_bn']))
 
     def forward(self, xyz, features):
         l_xyz, l_features = [xyz], [features]
