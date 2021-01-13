@@ -273,3 +273,130 @@ class collate_fn_setup(object):
                 representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
                 support_mask[b,ind] = True
         return torch.FloatTensor(pc_batch), torch.FloatTensor(feature_volume_batch), torch.BoolTensor(support_mask), pose_batch
+
+class GraspDatasetVal(Dataset):
+    def __init__(self, config, max_sample_grasp=10, use_cache=False, verbose=True, **kwargs):
+        super(GraspDatasetVal, self).__init__(**kwargs)
+        self.config = config
+        self.max_npts = 20000
+        self.max_sample_grasp = max_sample_grasp
+
+        self.train_scene_path = config['train_data']
+        self.val_scene_path = config['val_data']
+        self.train_label_path = config['train_label']
+        self.val_label_path = config['val_label']
+
+        self.train_labels = list(sorted(list(map(lambda x: os.path.split(x)[-1], glob.glob(self.train_label_path+'/*.npy')))))
+        self.val_labels = list(sorted(list(map(lambda x: os.path.split(x)[-1], glob.glob(self.val_label_path+'/*.npy')))))
+
+        self.training = False
+
+    def get_config(self):
+        return self.config
+
+    def train(self):
+        self.scene_path = self.train_scene_path
+        self.label_path = self.train_label_path
+        self.labels = self.train_labels
+        self.training = True
+    def eval(self):
+        self.scene_path = self.val_scene_path
+        self.label_path = self.val_label_path
+        self.labels = self.val_labels
+        self.training = False
+    def __len__(self):
+        return len(self.labels)
+    def __getitem__(self, item_idx):
+        mode = "train" if self.training else "val"
+        id_ = self.labels[item_idx]
+        # Check if the pre-computed results exist
+        config = self.config
+        pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
+        hand_poses = np.load(self.label_path + '/' + id_) # (N, 3, 4)
+
+        if len(pc_scene)>self.max_npts:
+            idx = np.random.choice(len(pc_scene), self.max_npts, replace=False)
+            pc_scene = pc_scene[idx]
+
+        # Normalize
+        pc_origin = (pc_scene.max(axis=0) + pc_scene.min(axis=0)) / 2.0
+        pc_origin[2] = pc_scene[:,2].min() # 0?
+        pc_origin = pc_origin.reshape(1, 3)
+        pc_scene -= pc_origin
+        if len(hand_poses) > 0:
+            hand_poses[:,:,3] -= pc_origin
+        view_point = np.array([[0.0, 0.0, 2.0]], dtype=np.float32) # (1, 3)
+
+        # Simulate single view by Hidden Point Removal
+        visible_ind = HPR(pc_scene, view_point)
+        pc_scene = pc_scene[visible_ind]
+        # Save to PLY for visualization?
+        # TODO: Delete ME
+        # pc = pcl.PointCloud(pc_scene)
+        # pcl.save(pc, './'+id_[:-4]+'.pcd')
+        # del pc
+
+        # Subsample
+        # pc_scene = np.unique(pc_scene, axis=0) # FIXME: O(NlogN)
+        while len(pc_scene)<config['input_points']:
+            idx = np.random.choice(len(pc_scene), min(len(pc_scene), config['input_points']-len(pc_scene)), replace=False)
+            add_points = pc_scene[idx] + np.random.randn(len(idx), 3) * 0.5 * 0.001
+            pc_scene = np.unique(np.append(pc_scene, add_points, axis=0), axis=0)
+        if len(pc_scene)>config['input_points']:
+            idx = np.random.choice(len(pc_scene), config['input_points'], replace=False)
+            pc_scene = pc_scene[idx]
+
+        ### Read & Decode Hand Pose ###
+        if len(hand_poses)>max(self.max_sample_grasp, 100):
+            hand_poses = hand_poses[np.random.choice(len(hand_poses),
+                                                     max(self.max_sample_grasp, 100),
+                                                     replace=False)]
+        else: # <=
+            np.random.shuffle(hand_poses)
+        poses_list = np.empty((0, 3, 4), dtype=np.float32)
+        enclosed_pts_list = []
+        for pose in hand_poses:
+            ### Do preprocessing, augmentation here ###
+            gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
+            enclosed_pts = crop_index(pc_scene, gripper_outer1, gripper_outer2)
+            if len(enclosed_pts)==0:
+                continue
+            poses_list = np.append(poses_list, pose[np.newaxis], axis=0) # (N, 3, 4)
+            enclosed_pts_list.append(np.array(list(set(enclosed_pts)), dtype=np.int32)) # (N,)
+
+        poses_list = poses_list[:self.max_sample_grasp]
+        enclosed_pts_list = enclosed_pts_list[:self.max_sample_grasp]
+
+        return pc_scene, poses_list, enclosed_pts_list, pc_origin, os.path.splitext(id_)[0]
+
+class collate_fn_setup_val(object):
+    def __init__(self, config, representation):
+        self.config = config
+        self.representation = representation
+    def __call__(self, batch):
+        config = self.config
+        representation = self.representation
+        pc_batch, pose_batch, enclosed_pt_batch, pc_origin, scene_id = zip(*batch)
+        pc_batch = np.stack(pc_batch).astype(np.float32)
+        input_points = pc_batch.shape[1]
+        feature_volume_batch = np.zeros((pc_batch.shape[0], input_points,
+                                       config['n_pitch'],
+                                       config['n_yaw'],
+                                       8), dtype=np.float32)
+        support_mask = np.zeros((pc_batch.shape[0], input_points), dtype=np.bool)
+        pc_origin = np.stack(pc_origin) # (N, 1, 3)
+        for b in range(pc_batch.shape[0]):
+            for n, (pose, ind) in enumerate(zip(pose_batch[b], enclosed_pt_batch[b])):
+                if len(ind)==0:
+                    continue
+                (xyz,
+                 roll,
+                 pitch_index,
+                 pitch_residual,
+                 yaw_index,
+                 yaw_residual) = representation.grasp_representation(pose,
+                 pc_batch[b,:], # shape: (N, 3)
+                 ind)
+                representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
+                support_mask[b,ind] = True
+        return torch.FloatTensor(pc_batch), torch.FloatTensor(feature_volume_batch), torch.BoolTensor(support_mask), pose_batch, pc_origin, scene_id

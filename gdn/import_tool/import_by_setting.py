@@ -83,7 +83,11 @@ def import_model_by_setting(config, mode='train'):
             dataset = (dataset_query, dataset_support)
             my_collate_fn = collate_fn_setup(config, representation)
         else:
-            raise NotImplementedError("Evaluation mode in meta learner is not implement yet.")
+            from ..representation.euler_scene_att_ce_meta import GraspDatasetVal, collate_fn_setup_val
+            dataset_query = GraspDatasetVal(config, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
+            dataset_support = GraspDatasetVal(config, max_sample_grasp=config["n_support_grasp"], use_cache=False)
+            dataset = (dataset_query, dataset_support)
+            my_collate_fn = collate_fn_setup_val(config, representation)
     elif config['representation'] == 'euler_scene_att_ce_meta_cd':
         from ..representation.euler_scene_att_ce_meta import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_att_ce_meta.activation import EulerActivation as ActivationLayer
@@ -91,29 +95,32 @@ def import_model_by_setting(config, mode='train'):
         loss = MultiTaskLossWrapper(config).cuda()
         if not ('tune_task_weights' in config and config['tune_task_weights']):
             freeze_model(loss)
+        config_query = copy.deepcopy(config)
+        config_support = copy.deepcopy(config)
+
+        config_query['train_data'] = config['train_data_q']
+        config_query['train_label'] = config['train_label_q']
+        config_query['val_data'] = config['val_data_q']
+        config_query['val_label'] = config['val_label_q']
+
+        config_support['train_data'] = config['train_data_s']
+        config_support['train_label'] = config['train_label_s']
+        config_support['val_data'] = config['val_data_s']
+        config_support['val_label'] = config['val_label_s']
         if mode == 'train':
             from ..representation.euler_scene_att_ce_meta import GraspDataset, collate_fn_setup
-
-            config_query = copy.deepcopy(config)
-            config_support = copy.deepcopy(config)
-
-            config_query['train_data'] = config['train_data_q']
-            config_query['train_label'] = config['train_label_q']
-            config_query['val_data'] = config['val_data_q']
-            config_query['val_label'] = config['val_label_q']
-
-            config_support['train_data'] = config['train_data_s']
-            config_support['train_label'] = config['train_label_s']
-            config_support['val_data'] = config['val_data_s']
-            config_support['val_label'] = config['val_label_s']
-
             dataset_query1 = GraspDataset(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
             dataset_query2 = GraspDataset(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
             dataset_support = GraspDataset(config_support, max_sample_grasp=config["n_support_grasp"], use_cache=False)
             dataset = (dataset_query1, dataset_query2, dataset_support)
             my_collate_fn = collate_fn_setup(config, representation)
         else:
-            raise NotImplementedError("Evaluation mode in meta learner is not implement yet.")
+            from ..representation.euler_scene_att_ce_meta import GraspDatasetVal, collate_fn_setup_val
+            dataset_query1 = GraspDatasetVal(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
+            dataset_query2 = GraspDatasetVal(config_query, max_sample_grasp=config["max_sample_grasp"], use_cache=False)
+            dataset_support = GraspDatasetVal(config_support, max_sample_grasp=config["n_support_grasp"], use_cache=False)
+            dataset = (dataset_query1, dataset_query2, dataset_support)
+            my_collate_fn = collate_fn_setup_val(config, representation)
     elif config['representation'] == 'euler_scene_rp':
         from ..representation.euler_scene_rp import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_rp.activation import EulerActivation as ActivationLayer
