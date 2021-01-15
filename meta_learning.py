@@ -141,7 +141,7 @@ if __name__ == '__main__':
                 rot_loss_q, ws, uncert) = loss_function(pred_q, ind_q, att_q, volume_query)
             loss = loss_q + config['l21_reg_rate'] * l21
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=20.0, norm_type=2)
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0, norm_type=2)
             optimizer.step()
             info += np.array([
                     loss.item(),

@@ -184,7 +184,7 @@ if __name__ == '__main__':
                 rot_loss_ss, _, _) = loss_function(pred_ss, ind_ss, att_ss, volume_support)
             loss = loss_q + loss_s + loss_qq + loss_ss + config['l21_reg_rate'] * l21
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=20.0, norm_type=2)
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0, norm_type=2)
             optimizer.step()
             info += np.array([
                     loss.item(),

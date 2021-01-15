@@ -146,7 +146,7 @@ class MetaLearner(nn.Module):
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
-        self.knn = 30
+        self.knn = 10
 
         max_memory = 64
         res = faiss.StandardGpuResources()
