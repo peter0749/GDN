@@ -264,6 +264,8 @@ def import_model_by_setting(config, mode='train'):
 
     if config['optimizer'] == 'adam':
         optimizer = optim.Adam(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'])
+    elif config['optimizer'] == 'sgd':
+        optimizer = optim.SGD(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'], momentum=config['momentum'])
     else:
         raise NotImplementedError("Not support %s now."%config['optimizer'])
 

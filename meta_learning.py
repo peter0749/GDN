@@ -100,6 +100,7 @@ if __name__ == '__main__':
     for e in range(start_epoch,1+epochs):
         info_namespace = [
             "Train/Loss",
+            "Train/DPP_regularization",
             "Train/Uncertainty",
             "Train/Loss_q",
             "Train/Foreground_q",
@@ -132,17 +133,19 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             # pseudo-label probagation: support -> query
-            pred_q, ind_q, att_q, prototype_s = model(pc_support, mask_support, pc_query, None)
+            pred_q, ind_q, att_q, prototype_s, l21_q = model(pc_support, mask_support, pc_query, None)
 
+            l21 = l21_q.mean()
             (loss_q, foreground_loss_q, cls_loss_q,
                 x_loss_q, y_loss_q, z_loss_q,
                 rot_loss_q, ws, uncert) = loss_function(pred_q, ind_q, att_q, volume_query)
-            loss = loss_q
+            loss = loss_q + config['l21_reg_rate'] * l21
             loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=20.0, norm_type=2)
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0, norm_type=2)
             optimizer.step()
             info += np.array([
                     loss.item(),
+                    l21.item(),
                     uncert.item(),
                     loss_q.item(),
                     foreground_loss_q,
@@ -153,7 +156,7 @@ if __name__ == '__main__':
                     rot_loss_q,
                     1
                 ],dtype=np.float32)
-            pbar.set_description('[%d/%d][%d/%d]: loss: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_q.item()))
+            pbar.set_description('[%d/%d][%d/%d]: loss: %.2f reg: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_q.item(), l21.item()))
             pbar.update(1)
             write_hwstat(config['logdir'])
 
@@ -162,6 +165,7 @@ if __name__ == '__main__':
             logger.add_scalar(info_namespace[i], info[i], e)
 
         if e % config['eval_freq'] == 0:
+            info = np.zeros(11, dtype=np.float32)
             info_namespace = [
                 "Valid/Loss_q",
                 "Valid/Foreground_q",
@@ -173,7 +177,6 @@ if __name__ == '__main__':
                 "Valid/mAP_q",
                 "Valid/TPR_q",
                 ] # 9
-            info = np.zeros(len(info_namespace)+2, dtype=np.float32)
             # n_pos
             # n_iter
             model.eval()
