@@ -1,4 +1,8 @@
+import time
 import numpy as np
+import scipy
+from scipy.sparse import csr_matrix
+from scipy.sparse.linalg import inv as sparse_inv
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,6 +11,9 @@ from collections import namedtuple
 from pointnet2.utils import pointnet2_utils
 from pointnet2.utils.pointnet2_modules import PointnetFPModule
 from pointnet2.utils.pointnet2_modules import PointnetSAModuleMSG
+from .knn import search_index_pytorch_fast
+
+
 
 class ImportanceSamplingModule(nn.Module):
     def __init__(self, n_channels=3, hidden_channels=[64, 64]):
@@ -139,6 +146,7 @@ class MetaLearner(nn.Module):
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
+        self.knn = 5
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 
@@ -163,6 +171,29 @@ class MetaLearner(nn.Module):
         features = pc[..., 3:].transpose(1, 2).contiguous() if pc.size(-1) > 3 else None
 
         return xyz, features
+
+    def make_kernel(self, D, I, sigma=1.0):
+        device = D.device
+        I = I[:,1:]
+        D = D[:,1:]
+        D = torch.exp(-D / (sigma**2.0))
+        D = D.detach().cpu().numpy()
+        I = I.detach().cpu().numpy()
+        N, k = I.shape
+        assert k == self.knn
+        row_idx = np.arange(N)
+        row_idx_rep = np.tile(row_idx,(k,1)).T
+        W = csr_matrix((D.flatten('F'), (row_idx_rep.flatten('F'), I.flatten('F'))), shape=(N, N))
+        W = W + W.T # make it symmetric
+        W = W - scipy.sparse.diags(W.diagonal()) # remove self loop
+        S = W.sum(axis = 1)
+        S[S==0] = 1
+        D = np.array(1./ np.sqrt(S))
+        D = scipy.sparse.diags(D.reshape(-1))
+        Wn = D * W * D
+        A = scipy.sparse.eye(Wn.shape[0]) - self.lp_alpha * Wn
+        A = A.toarray().astype(np.float32)
+        return torch.from_numpy(A).to(device)
 
     def get_propotypes(self, support_pcs, support_masks):
         # Seed selection from support set (prototype)
@@ -216,22 +247,27 @@ class MetaLearner(nn.Module):
         n_nodes = q_query + n_support
         query_set_flatten = h_query_subsampled.view(-1, 128) # (Q=B*k, 128)
         f = torch.cat((query_set_flatten, support_emb), 0) # (Q+S, 128)
-        d2 = ((f.view(1, n_nodes, 128).expand(n_nodes, n_nodes, 128) - f.view(n_nodes, 1, 128).expand(n_nodes, n_nodes, 128))**2).sum(2) # (Q+S, Q+S)
 
-        # Normalize to 0~1. Now A is a non-negative and symmetric adjacency matrix
-        A = torch.exp(-d2) * (1.0 - torch.eye(d2.size(0), dtype=d2.dtype, device=d2.device)).clamp(0, 1) # remove self loop
+        with torch.no_grad():
+            c = time.time()
+            D_ivf, I_ivf = search_index_pytorch_fast(f, self.knn + 1, nlist=1, nprobe=1)
+            elapsed_knn = time.time() - c
+            # D_ivf: (Q+S, k), I_ivf: (Q+S, k)
+            #W_inv = self.make_kernel(D_ivf, I_ivf) # W_inv: (Q+S, Q+S), sparse tensor
+            c = time.time()
+            W = self.make_kernel(D_ivf, I_ivf) # W_inv: (Q+S, Q+S), sparse tensor
+            elapsed_kernel = time.time() - c
+            c = time.time()
+            u = torch.cholesky(W)
+            W_inv = torch.cholesky_inverse(u)
+            elapsed_inv = time.time() - c
+            print("knn, kernel, inv: %.4f %.4f %.4f"%(elapsed_knn, elapsed_kernel, elapsed_inv))
+            #W_T = W.T
+            #W_inv = W_T.mm(W).inverse().mm(W_T)
 
-        # Construct degree matrix (diagonal)
-        D = A.sum(1) # (Q+S,) The degree matrix of A
-        D = 1.0 / torch.sqrt(D+1e-6) # D^-1/2
-        W = D.view(1,n_nodes) * A * D.view(n_nodes,1) # normalize by degree
         # Y: (Q+S, ndim_output)
         Y = torch.cat((torch.zeros(q_query, s.size(1), dtype=s.dtype, device=s.device), s), 0)
-        # (Q+S, Q+S) x (Q+S, ndim_output) -> (Q+S, ndim_output)
-        W = torch.eye(W.size(0), dtype=W.dtype, device=W.device) - self.lp_alpha * W
-        u = torch.cholesky(W)
-        W_inv = torch.cholesky_inverse(u)
-        #W_inv = W.T.mm(W).inverse().mm(W.T)
+        #Z = torch.sparse.mm(W_inv, Y)
         Z = torch.mm(W_inv, Y)
         # Generate imtermediate results by label probagation
         x = Z[:q_query].reshape(b_query, k_query, self.prototype_dim) # (B, k, 300)
