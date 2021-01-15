@@ -6,6 +6,7 @@ import faiss
 def search_index_pytorch_fast(gpu_index, x, k):
     n, d = x.shape
 
+    gpu_index.reset() # clear the graph
     #gpu_index.train(x[:max_samples])
     #assert gpu_index.is_trained
     #gpu_index.nprobe = nprobe
