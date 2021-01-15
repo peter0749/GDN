@@ -11,9 +11,9 @@ from collections import namedtuple
 from pointnet2.utils import pointnet2_utils
 from pointnet2.utils.pointnet2_modules import PointnetFPModule
 from pointnet2.utils.pointnet2_modules import PointnetSAModuleMSG
+
+import faiss
 from .knn import search_index_pytorch_fast
-
-
 
 class ImportanceSamplingModule(nn.Module):
     def __init__(self, n_channels=3, hidden_channels=[64, 64]):
@@ -89,7 +89,7 @@ class Backbone(nn.Module):
                 npoint=config['subsample_levels'][2],
                 radii=[0.10, 0.15],
                 nsamples=[16, 32],
-                mlps=[[c_in, 128, 256, 512], [c_in, 128, 256, 512]],
+            mlps=[[c_in, 128, 256, 512], [c_in, 128, 256, 512]],
                 use_xyz=use_xyz,
                 bn=self.config['use_bn']
             )
@@ -146,7 +146,15 @@ class MetaLearner(nn.Module):
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
-        self.knn = 5
+        self.knn = 20
+
+        max_memory = 64
+        res = faiss.StandardGpuResources()
+        res.setTempMemory(max_memory * 1024 * 1024)
+
+        cfg = faiss.GpuIndexIVFFlatConfig()
+        cfg.useFloat16 = True
+        self.gpu_index = faiss.GpuIndexIVFFlat(res, 128, 1, faiss.METRIC_L2, cfg)
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 
@@ -173,12 +181,9 @@ class MetaLearner(nn.Module):
         return xyz, features
 
     def make_kernel(self, D, I, sigma=1.0):
-        device = D.device
         I = I[:,1:]
         D = D[:,1:]
-        D = torch.exp(-D / (sigma**2.0))
-        D = D.detach().cpu().numpy()
-        I = I.detach().cpu().numpy()
+        D = np.exp(-D / (sigma**2.0))
         N, k = I.shape
         assert k == self.knn
         row_idx = np.arange(N)
@@ -193,7 +198,8 @@ class MetaLearner(nn.Module):
         Wn = D * W * D
         A = scipy.sparse.eye(Wn.shape[0]) - self.lp_alpha * Wn
         A = A.toarray().astype(np.float32)
-        return torch.from_numpy(A).to(device)
+        A = torch.from_numpy(A)
+        return A
 
     def get_propotypes(self, support_pcs, support_masks):
         # Seed selection from support set (prototype)
@@ -235,7 +241,7 @@ class MetaLearner(nn.Module):
         # Seed selection from query set
         importance = self.importance_sampling(h_query)[...,0] # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
-        inds = importance_topk.indices.int() # (B, k)
+        inds = importance_topk.indices.int().clamp(min=0, max=h_query.size(1) - 1) # (B, k)
         att  = importance_topk.values  # (B, k)
         h_query_subsampled = pointnet2_utils.gather_operation(h_query.transpose(1, 2).contiguous(), inds) # (B, 128, k)
         h_query_subsampled = h_query_subsampled.transpose(1, 2).contiguous() # (B, k, 128)
@@ -250,20 +256,19 @@ class MetaLearner(nn.Module):
 
         with torch.no_grad():
             c = time.time()
-            D_ivf, I_ivf = search_index_pytorch_fast(f, self.knn + 1, nlist=1, nprobe=1)
             elapsed_knn = time.time() - c
-            # D_ivf: (Q+S, k), I_ivf: (Q+S, k)
-            #W_inv = self.make_kernel(D_ivf, I_ivf) # W_inv: (Q+S, Q+S), sparse tensor
+            # D: (Q+S, k), I: (Q+S, k)
+            torch.cuda.synchronize()
+            D, I = search_index_pytorch_fast(self.gpu_index, f.cpu().numpy(), self.knn + 1)
+            I = np.clip(I, 0, f.size(0) - 1)
             c = time.time()
-            W = self.make_kernel(D_ivf, I_ivf) # W_inv: (Q+S, Q+S), sparse tensor
+            W = self.make_kernel(D, I).to(f.device) # W_inv: (Q+S, Q+S), sparse tensor
             elapsed_kernel = time.time() - c
             c = time.time()
-            u = torch.cholesky(W)
-            W_inv = torch.cholesky_inverse(u)
+            W_T = W.T
+            W_inv = W_T.mm(W).inverse().mm(W.T)
             elapsed_inv = time.time() - c
             print("knn, kernel, inv: %.4f %.4f %.4f"%(elapsed_knn, elapsed_kernel, elapsed_inv))
-            #W_T = W.T
-            #W_inv = W_T.mm(W).inverse().mm(W_T)
 
         # Y: (Q+S, ndim_output)
         Y = torch.cat((torch.zeros(q_query, s.size(1), dtype=s.dtype, device=s.device), s), 0)
@@ -278,9 +283,11 @@ class MetaLearner(nn.Module):
         if self.return_sparsity:
             # xyz: (B, N, 3)
             ind_sub = pointnet2_utils.furthest_point_sample(xyz_query, self.DPP_L_size)
+            ind_sub = ind_sub.clamp(min=0, max=xyz_query.size(1) - 1)
             p_sub = pointnet2_utils.gather_operation(xyz_query.transpose(1,2).contiguous(), ind_sub) # (B, 3, k)
             a_sub = pointnet2_utils.gather_operation(importance.unsqueeze(1).contiguous(), ind_sub)[:,0,:].pow(0.5) # (B, k)
             a_argsort = torch.argsort(a_sub, dim=1, descending=True).int() # (B, k)
+            a_argsort = a_argsort.clamp(min=0, max=a_sub.size(1) - 1)
             p_sub = pointnet2_utils.gather_operation(p_sub.contiguous(), a_argsort).contiguous() # (B, 3, k), sorted
             a_sub = pointnet2_utils.gather_operation(a_sub.unsqueeze(1).contiguous(), a_argsort)[:,0,:].contiguous() # (B, k), sorted
             A = p_sub.unsqueeze(2).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, 1->k, k)

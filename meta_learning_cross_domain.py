@@ -54,11 +54,8 @@ if __name__ == '__main__':
         os.makedirs(config['logdir']+'/ckpt')
 
     representation, dataset, my_collate_fn, base_model, model, optimizer, loss_function = import_model_by_setting(config)
-    #representation, dataset, my_collate_fn, base_model, _, optimizer, loss_function = import_model_by_setting(config)
-    #model = base_model
 
     dataset_query, dataset_support_in_eval, dataset_support = dataset
-    device = next(base_model.parameters()).device
     dataset_query.train()
     dataset_support_in_eval.train() # always train mode
     dataset_support.train()
