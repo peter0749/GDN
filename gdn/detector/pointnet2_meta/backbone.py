@@ -146,7 +146,7 @@ class MetaLearner(nn.Module):
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
-        self.knn = 10
+        self.knn = 30
         self.ivf_nlist = 8
         self.ivf_nprob = 8
 
@@ -238,7 +238,7 @@ class MetaLearner(nn.Module):
         # Seed selection from query set
         importance = self.importance_sampling(h_query)[...,0] # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
-        inds = importance_topk.indices.int() # (B, k)
+        inds = importance_topk.indices.int().clamp(min=0, max=h_query.size(1) - 1) # (B, k)
         att  = importance_topk.values.clamp(min=0, max=1)  # (B, k)
         h_query_subsampled = pointnet2_utils.gather_operation(h_query.transpose(1, 2).contiguous(), inds) # (B, 128, k)
         h_query_subsampled = h_query_subsampled.transpose(1, 2).contiguous() # (B, k, 128)
@@ -279,10 +279,10 @@ class MetaLearner(nn.Module):
 
         if self.return_sparsity:
             # xyz: (B, N, 3)
-            ind_sub = pointnet2_utils.furthest_point_sample(xyz_query, self.DPP_L_size)
+            ind_sub = pointnet2_utils.furthest_point_sample(xyz_query, self.DPP_L_size).clamp(min=0, max=xyz_query.size(1) - 1)
             p_sub = pointnet2_utils.gather_operation(xyz_query.transpose(1,2).contiguous(), ind_sub) # (B, 3, k)
             a_sub = pointnet2_utils.gather_operation(importance.unsqueeze(1).contiguous(), ind_sub)[:,0,:].pow(0.5) # (B, k)
-            a_argsort = torch.argsort(a_sub, dim=1, descending=True).int() # (B, k)
+            a_argsort = torch.argsort(a_sub, dim=1, descending=True).int().clamp(min=0, max=a_sub.size(1) - 1) # (B, k)
             p_sub = pointnet2_utils.gather_operation(p_sub.contiguous(), a_argsort).contiguous() # (B, 3, k), sorted
             a_sub = pointnet2_utils.gather_operation(a_sub.unsqueeze(1).contiguous(), a_argsort)[:,0,:].contiguous() # (B, k), sorted
             A = p_sub.unsqueeze(2).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, 1->k, k)
