@@ -256,11 +256,11 @@ class MetaLearner(nn.Module):
 
         with torch.no_grad():
             c = time.time()
-            elapsed_knn = time.time() - c
             # D: (Q+S, k), I: (Q+S, k)
             torch.cuda.synchronize()
             D, I = search_index_pytorch_fast(self.gpu_index, f.cpu().numpy(), self.knn + 1)
             I = np.clip(I, 0, f.size(0) - 1)
+            elapsed_knn = time.time() - c
             c = time.time()
             W = self.make_kernel(D, I).to(f.device) # W_inv: (Q+S, Q+S), sparse tensor
             elapsed_kernel = time.time() - c
