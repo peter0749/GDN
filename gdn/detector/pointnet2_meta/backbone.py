@@ -152,9 +152,11 @@ class MetaLearner(nn.Module):
         res = faiss.StandardGpuResources()
         res.setTempMemory(max_memory * 1024 * 1024)
 
-        cfg = faiss.GpuIndexIVFFlatConfig()
+        #cfg = faiss.GpuIndexIVFFlatConfig()
+        cfg = faiss.GpuIndexFlatConfig()
         cfg.useFloat16 = True
-        self.gpu_index = faiss.GpuIndexIVFFlat(res, 128, 1, faiss.METRIC_L2, cfg)
+        #self.gpu_index = faiss.GpuIndexIVFFlat(res, 128, 1, faiss.METRIC_L2, cfg)
+        self.gpu_index = faiss.GpuIndexFlatL2(res, 128, cfg)
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 

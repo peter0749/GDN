@@ -2,12 +2,13 @@ import numpy as np
 import torch
 import faiss
 
-def search_index_pytorch_fast(gpu_index, x, k, nprobe=1, max_samples=5000):
+#def search_index_pytorch_fast(gpu_index, x, k, nprobe=1, max_samples=5000):
+def search_index_pytorch_fast(gpu_index, x, k):
     n, d = x.shape
 
-    gpu_index.train(x[:max_samples])
-    assert gpu_index.is_trained
-    gpu_index.nprobe = nprobe
+    #gpu_index.train(x[:max_samples])
+    #assert gpu_index.is_trained
+    #gpu_index.nprobe = nprobe
     gpu_index.add(x)
     D, I = gpu_index.search(x, k)
 
@@ -20,11 +21,13 @@ if __name__ == '__main__':
 
     d = 128
 
-    cfg = faiss.GpuIndexIVFFlatConfig()
+    #cfg = faiss.GpuIndexIVFFlatConfig()
+    cfg = faiss.GpuIndexFlatConfig()
     cfg.useFloat16 = True
     res = faiss.StandardGpuResources()
     res.setTempMemory(64 * 1024 * 1024)
-    gpu_index = faiss.GpuIndexIVFFlat(res, d, 1, faiss.METRIC_L2, cfg)
+    #gpu_index = faiss.GpuIndexIVFFlat(res, d, 1, faiss.METRIC_L2, cfg)
+    gpu_index = faiss.GpuIndexFlatL2(res, d, cfg)
 
     A = torch.randn(6144, d).cuda()
 
