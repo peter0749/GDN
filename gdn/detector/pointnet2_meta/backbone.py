@@ -146,15 +146,12 @@ class MetaLearner(nn.Module):
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
-        self.knn = 20
+        self.knn = 10
+        self.ivf_nlist = 8
+        self.ivf_nprob = 8
 
-        max_memory = 64
-        res = faiss.StandardGpuResources()
-        res.setTempMemory(max_memory * 1024 * 1024)
-
-        cfg = faiss.GpuIndexIVFFlatConfig()
-        cfg.useFloat16 = True
-        self.gpu_index = faiss.GpuIndexIVFFlat(res, 128, 1, faiss.METRIC_L2, cfg)
+        self.faiss_quantizer = faiss.IndexFlatIP(128)
+        self.faiss_index = faiss.IndexIVFFlat(self.faiss_quantizer, 128, self.ivf_nlist, faiss.METRIC_L2)
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 
@@ -241,8 +238,8 @@ class MetaLearner(nn.Module):
         # Seed selection from query set
         importance = self.importance_sampling(h_query)[...,0] # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
-        inds = importance_topk.indices.int().clamp(min=0, max=h_query.size(1) - 1) # (B, k)
-        att  = importance_topk.values  # (B, k)
+        inds = importance_topk.indices.int() # (B, k)
+        att  = importance_topk.values.clamp(min=0, max=1)  # (B, k)
         h_query_subsampled = pointnet2_utils.gather_operation(h_query.transpose(1, 2).contiguous(), inds) # (B, 128, k)
         h_query_subsampled = h_query_subsampled.transpose(1, 2).contiguous() # (B, k, 128)
 
@@ -258,7 +255,7 @@ class MetaLearner(nn.Module):
             c = time.time()
             # D: (Q+S, k), I: (Q+S, k)
             torch.cuda.synchronize()
-            D, I = search_index_pytorch_fast(self.gpu_index, f.cpu().numpy(), self.knn + 1)
+            D, I = search_index_pytorch_fast(self.faiss_index, f.cpu().numpy(), self.knn + 1, nprobe=self.ivf_nprob)
             I = np.clip(I, 0, f.size(0) - 1)
             elapsed_knn = time.time() - c
             c = time.time()
@@ -283,11 +280,9 @@ class MetaLearner(nn.Module):
         if self.return_sparsity:
             # xyz: (B, N, 3)
             ind_sub = pointnet2_utils.furthest_point_sample(xyz_query, self.DPP_L_size)
-            ind_sub = ind_sub.clamp(min=0, max=xyz_query.size(1) - 1)
             p_sub = pointnet2_utils.gather_operation(xyz_query.transpose(1,2).contiguous(), ind_sub) # (B, 3, k)
             a_sub = pointnet2_utils.gather_operation(importance.unsqueeze(1).contiguous(), ind_sub)[:,0,:].pow(0.5) # (B, k)
             a_argsort = torch.argsort(a_sub, dim=1, descending=True).int() # (B, k)
-            a_argsort = a_argsort.clamp(min=0, max=a_sub.size(1) - 1)
             p_sub = pointnet2_utils.gather_operation(p_sub.contiguous(), a_argsort).contiguous() # (B, 3, k), sorted
             a_sub = pointnet2_utils.gather_operation(a_sub.unsqueeze(1).contiguous(), a_argsort)[:,0,:].contiguous() # (B, k), sorted
             A = p_sub.unsqueeze(2).expand(p_sub.size(0), 3, p_sub.size(2), p_sub.size(2)) # (B, 3, 1->k, k)

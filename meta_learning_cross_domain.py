@@ -105,7 +105,6 @@ if __name__ == '__main__':
     for e in range(start_epoch,1+epochs):
         info_namespace = [
             "Train/Loss",
-            "Train/DPP_regularization",
             "Train/Uncertainty",
             "Train/Loss_q",
             "Train/Foreground_q",
@@ -159,15 +158,14 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             # pseudo-label probagation: support -> query
-            pred_q, ind_q, att_q, prototype_s, l21_q = model(pc_support, mask_support, pc_query, None)
+            pred_q, ind_q, att_q, prototype_s = model(pc_support, mask_support, pc_query, None)
             # pseudo-label probagation: query -> support
-            pred_s, ind_s, att_s, prototype_q, l21_s = model(pc_query, mask_query, pc_support, None)
+            pred_s, ind_s, att_s, prototype_q = model(pc_query, mask_query, pc_support, None)
             # self consistency: support -> support
             pred_ss, ind_ss, att_ss = model(None, None, pc_support, prototype_s)[:3]
             # self consistency: query -> query
             pred_qq, ind_qq, att_qq = model(None, None, pc_query, prototype_q)[:3]
 
-            l21 = torch.cat((l21_q.view(-1), l21_s.view(-1))).mean()
             # Cross-Domain
             (loss_q, foreground_loss_q, cls_loss_q,
                 x_loss_q, y_loss_q, z_loss_q,
@@ -182,13 +180,12 @@ if __name__ == '__main__':
             (loss_ss, foreground_loss_ss, cls_loss_ss,
                 x_loss_ss, y_loss_ss, z_loss_ss,
                 rot_loss_ss, _, _) = loss_function(pred_ss, ind_ss, att_ss, volume_support)
-            loss = loss_q + loss_s + loss_qq + loss_ss + config['l21_reg_rate'] * l21
+            loss = loss_q + loss_s + loss_qq + loss_ss
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=20.0, norm_type=2)
             optimizer.step()
             info += np.array([
                     loss.item(),
-                    l21.item(),
                     uncert.item(),
                     loss_q.item(),
                     foreground_loss_q,
@@ -220,7 +217,7 @@ if __name__ == '__main__':
                     rot_loss_ss,
                     1
                 ],dtype=np.float32)
-            pbar.set_description('[%d/%d][%d/%d]: loss_s: %.2f loss_q: %.2f loss_ss: %.2f loss_qq: %.2f reg: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_s.item(), loss_q.item(), loss_ss.item(), loss_qq.item(), l21.item()))
+            pbar.set_description('[%d/%d][%d/%d]: loss_s: %.2f loss_q: %.2f loss_ss: %.2f loss_qq: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_s.item(), loss_q.item(), loss_ss.item(), loss_qq.item()))
             pbar.update(1)
             write_hwstat(config['logdir'])
 
@@ -229,7 +226,6 @@ if __name__ == '__main__':
             logger.add_scalar(info_namespace[i], info[i], e)
 
         if e % config['eval_freq'] == 0:
-            info = np.zeros(11, dtype=np.float32)
             info_namespace = [
                 "Valid/Loss_q",
                 "Valid/Foreground_q",
@@ -241,6 +237,7 @@ if __name__ == '__main__':
                 "Valid/mAP_q",
                 "Valid/TPR_q",
                 ] # 9
+            info = np.zeros(len(info_namespace)+2, dtype=np.float32)
             # n_pos
             # n_iter
             model.eval()
