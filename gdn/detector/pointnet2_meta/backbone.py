@@ -150,8 +150,7 @@ class MetaLearner(nn.Module):
         self.ivf_nlist = 8
         self.ivf_nprob = 8
 
-        self.faiss_quantizer = faiss.IndexFlatIP(128)
-        self.faiss_index = faiss.IndexIVFFlat(self.faiss_quantizer, 128, self.ivf_nlist, faiss.METRIC_L2)
+        self.faiss_index = faiss.IndexFlatL2(128)
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 
@@ -255,7 +254,7 @@ class MetaLearner(nn.Module):
             c = time.time()
             # D: (Q+S, k), I: (Q+S, k)
             torch.cuda.synchronize()
-            D, I = search_index_pytorch_fast(self.faiss_index, f.cpu().numpy(), self.knn + 1, nprobe=self.ivf_nprob)
+            D, I = search_index_pytorch_fast(self.faiss_index, f.cpu().numpy(), self.knn + 1)
             I = np.clip(I, 0, f.size(0) - 1)
             elapsed_knn = time.time() - c
             c = time.time()

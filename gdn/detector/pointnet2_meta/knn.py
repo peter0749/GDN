@@ -2,12 +2,9 @@ import numpy as np
 import torch
 import faiss
 
-def search_index_pytorch_fast(index, x, k, nprobe=1, max_samples=5000):
+def search_index_pytorch_fast(index, x, k):
     n, d = x.shape
 
-    index.train(x[:max_samples])
-    assert index.is_trained
-    index.nprobe = nprobe
     index.add(x)
     D, I = index.search(x, k)
     index.reset()
@@ -22,8 +19,7 @@ if __name__ == '__main__':
 
     d = 128
 
-    quantizer = faiss.IndexFlatIP(d)
-    index = faiss.IndexIVFFlat(quantizer, d, 8, faiss.METRIC_L2)
+    index = faiss.IndexFlatL2(d)
 
     while True:
         A = torch.randn(2048, d).cuda()
@@ -36,7 +32,7 @@ if __name__ == '__main__':
 
         faiss_start = time.time()
         A_cpu = A.cpu().numpy()
-        D, I = search_index_pytorch_fast(index, A_cpu, 5, nprobe=8)
+        D, I = search_index_pytorch_fast(index, A_cpu, 5)
         faiss_end = time.time()
 
         print('IVF accuracy = %.4f'%np.mean(I == np.array(I_cpu)))
