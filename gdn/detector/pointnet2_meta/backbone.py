@@ -12,6 +12,8 @@ from pointnet2.utils import pointnet2_utils
 from pointnet2.utils.pointnet2_modules import PointnetFPModule
 from pointnet2.utils.pointnet2_modules import PointnetSAModuleMSG
 
+from torch_cg import CG
+
 import faiss
 from .knn import search_index_pytorch_fast
 
@@ -199,9 +201,10 @@ class MetaLearner(nn.Module):
         D = scipy.sparse.diags(D.reshape(-1))
         Wn = D * W * D
         A = scipy.sparse.eye(Wn.shape[0]) - self.lp_alpha * Wn
-        A = A.toarray().astype(np.float32)
-        A = torch.from_numpy(A)
-        return A
+        Acoo = A.tocoo()
+        Apt = torch.sparse.FloatTensor(torch.LongTensor([Acoo.row.tolist(), Acoo.col.tolist()]),
+                                       torch.FloatTensor(Acoo.data.astype(np.float32)))
+        return Apt
 
     def get_propotypes(self, support_pcs, support_masks):
         # Seed selection from support set (prototype)
@@ -256,6 +259,11 @@ class MetaLearner(nn.Module):
         query_set_flatten = h_query_subsampled.view(-1, 128) # (Q=B*k, 128)
         f = torch.cat((query_set_flatten, support_emb), 0) # (Q+S, 128)
 
+        # Y: (Q+S, ndim_output)
+        #s_sparse = s.to_sparse().requires_grad_(True)
+        #Y = torch.cat((torch.sparse.FloatTensor(q_query,s.size(1)).to(s.device), s_sparse), 0)
+        Y = torch.cat((torch.zeros(q_query, s.size(1), dtype=s.dtype, device=s.device), s), 0)
+
         with torch.no_grad():
             c = time.time()
             # D: (Q+S, k), I: (Q+S, k)
@@ -266,16 +274,13 @@ class MetaLearner(nn.Module):
             c = time.time()
             W = self.make_kernel(D, I).to(f.device) # W_inv: (Q+S, Q+S), sparse tensor
             elapsed_kernel = time.time() - c
-            c = time.time()
-            W_T = W.T
-            W_inv = W_T.mm(W).inverse().mm(W.T)
-            elapsed_inv = time.time() - c
-            print("knn, kernel, inv: %.4f %.4f %.4f"%(elapsed_knn, elapsed_kernel, elapsed_inv))
+        c = time.time()
+        def W_bmm_lambda(X):
+            return torch.sparse.mm(W, X[0]).unsqueeze(0)
+        Z = CG(W_bmm_lambda, maxiter=300)(Y.unsqueeze(0))[0]
+        elapsed_z = time.time() - c
+        print("knn, kernel, z: %.4f %.4f %.4f"%(elapsed_knn, elapsed_kernel, elapsed_z))
 
-        # Y: (Q+S, ndim_output)
-        Y = torch.cat((torch.zeros(q_query, s.size(1), dtype=s.dtype, device=s.device), s), 0)
-        #Z = torch.sparse.mm(W_inv, Y)
-        Z = torch.mm(W_inv, Y)
         # Generate imtermediate results by label probagation
         x = Z[:q_query].reshape(b_query, k_query, self.prototype_dim) # (B, k, 300)
         # The final result
