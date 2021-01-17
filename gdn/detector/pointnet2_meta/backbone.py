@@ -148,7 +148,7 @@ class MetaLearner(nn.Module):
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
-        self.knn = 10
+        self.knn = 20
 
         max_memory = 64
         res = faiss.StandardGpuResources()
@@ -277,7 +277,13 @@ class MetaLearner(nn.Module):
         c = time.time()
         def W_bmm_lambda(X):
             return torch.sparse.mm(W, X[0]).unsqueeze(0)
-        Z = CG(W_bmm_lambda, maxiter=300)(Y.unsqueeze(0))[0]
+        cg = CG(W_bmm_lambda, maxiter=300)
+        Z = cg(Y.unsqueeze(0))[0]
+        if not cg.converged:
+            W = W.to_dense()
+            W_T = W.T
+            W_inv = W_T.mm(W).inverse().mm(W.T)
+            Z = torch.mm(W_inv, Y)
         elapsed_z = time.time() - c
         print("knn, kernel, z: %.4f %.4f %.4f"%(elapsed_knn, elapsed_kernel, elapsed_z))
 

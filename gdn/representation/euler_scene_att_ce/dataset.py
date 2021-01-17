@@ -34,24 +34,12 @@ class GraspDataset(Dataset):
         self.val_label_path = config['val_label']
 
         self.aug_size = config["aug_size"]
-        self.cache_path = config["cache_path"]
-        if not os.path.exists(self.cache_path):
-            os.makedirs(self.cache_path)
 
         self.train_labels = list(sorted(list(map(lambda x: os.path.split(x)[-1], glob.glob(self.train_label_path+'/*.npy')))))
         self.val_labels = list(sorted(list(map(lambda x: os.path.split(x)[-1], glob.glob(self.val_label_path+'/*.npy')))))
 
         self.use_aug = False
         self.training = False
-
-        if "d_uuid" in config:
-            if verbose:
-                print("Found uuid in your configuration file. We will train on cached dataset.")
-            self.dataset_uuid = uuid.UUID(config["d_uuid"])
-        else:
-            self.dataset_uuid = uuid.uuid1()
-
-        self.config["d_uuid"] = str(self.dataset_uuid)
 
     def get_config(self):
         return self.config
@@ -78,32 +66,9 @@ class GraspDataset(Dataset):
             true_idx = int(item_idx // self.aug_size)
             aug_idx = int(item_idx % self.aug_size)
             id_ = self.labels[true_idx]
-            cache_data_path = self.cache_path + ("/%s-data-%d-%d.h5"%(mode, true_idx, aug_idx))
-            cache_label_path = self.cache_path + ("/%s-label-%d-%d.h5"%(mode, true_idx, aug_idx))
         else:
             id_ = self.labels[item_idx]
-            cache_data_path = self.cache_path + ("/%s-data-%d.h5"%(mode, item_idx))
-            cache_label_path = self.cache_path + ("/%s-label-%d.h5"%(mode, item_idx))
         # Check if the pre-computed results exist
-        if os.path.exists(cache_data_path) and os.path.exists(cache_label_path):
-            try:
-                with h5py.File(cache_data_path, 'r') as f_data:
-                    with h5py.File(cache_label_path, 'r') as f_label:
-                        data_id = f_data.attrs['id']
-                        data_uuid = f_data.attrs['d_uuid']
-                        label_id = f_label.attrs['id']
-                        label_uuid = f_label.attrs['d_uuid']
-                        if data_id == id_ and label_id == id_ and\
-                           data_uuid == str(self.dataset_uuid) and\
-                           label_uuid == str(self.dataset_uuid):
-                               ind_len = int(f_label.attrs['ind_len'])
-                               return f_data['pointcloud'][:],\
-                                      f_label['poses'][:],\
-                                      [ list(f_label['indices/%d'%i]) for i in range(ind_len) ]
-            except Exception as e:
-                sys.stderr.write("HDF5 I/O ERROR (%s)\n"%str(e))
-                #pass
-        # raise RuntimeError("You shall not pass!!!")  #  TODO: REMOVE ME!!!
         config = self.config
         pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
         hand_poses = np.load(self.label_path + '/' + id_) # (N, 3, 4)
@@ -214,21 +179,6 @@ class GraspDataset(Dataset):
             else:
                 poses_list = np.append(poses_list, pose[np.newaxis], axis=0) # (N, 3, 4)
             enclosed_pts_list.append(np.array(list(set(enclosed_pts)), dtype=np.int32)) # (N,)
-
-        # Write the results to cache
-        with h5py.File(cache_data_path, "w") as f:
-            f.create_dataset('pointcloud', data=pc_scene, maxshape=pc_scene.shape, chunks=True)
-            f.attrs['id'] = id_
-            f.attrs['d_uuid'] = str(self.dataset_uuid)
-        with h5py.File(cache_label_path, "w") as f:
-            if poses_list is None or len(poses_list) == 0:
-                poses_list = np.array([], dtype=np.float32)
-            f.create_dataset('poses', data=poses_list, maxshape=poses_list.shape, chunks=True)
-            for i in range(len(enclosed_pts_list)):
-                f.create_dataset('indices/%d'%i, data=enclosed_pts_list[i], chunks=None)
-            f.attrs['ind_len'] = len(enclosed_pts_list)
-            f.attrs['id'] = id_
-            f.attrs['d_uuid'] = str(self.dataset_uuid)
 
         return pc_scene, poses_list, enclosed_pts_list
 

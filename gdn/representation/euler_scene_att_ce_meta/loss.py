@@ -24,7 +24,7 @@ def loss_baseline(y_pred, ind, importance, y_true, foreground_w, cls_w, x_w, y_w
     pi = torch.acos(torch.zeros(1))[0] * 2
     y_dim = y_true.size() # (B, M, n_pitch, n_yaw, 8)
 
-    y_true_importance = (y_true[...,0]>0).any(-1).any(-1).float().contiguous() # (B, M, n_pitch, n_yaw) -> (B, M, n_pitch) -> (B, M)
+    y_true_importance = (y_true[...,0]>0).any(-1).any(-1).float() # (B, M, n_pitch, n_yaw) -> (B, M, n_pitch) -> (B, M)
     y_true_transpose = y_true.view(y_true.size(0), y_true.size(1), -1).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8) -> (B, ?, M)
     # (B, ?, M) -> (B, ?, k) -> (B, k, ?)
     y_true = pointnet2_utils.gather_operation(y_true_transpose, ind).transpose(1, 2)

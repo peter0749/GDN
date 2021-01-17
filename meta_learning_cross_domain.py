@@ -94,7 +94,7 @@ if __name__ == '__main__':
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
         base_model.load_state_dict(states['base_model'])
-        if 'loss_state' in states and (not states['loss_state'] is None) and hasattr(loss_function, 'load_state_dict'):
+        if config["load_task_weights"] and 'loss_state' in states and (not states['loss_state'] is None) and hasattr(loss_function, 'load_state_dict'):
             loss_function.load_state_dict(states['loss_state'])
         best_tpr2 = states['best_tpr2']
         optimizer.load_state_dict(states['optimizer_state'])
