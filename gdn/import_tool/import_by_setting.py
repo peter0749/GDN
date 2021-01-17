@@ -244,10 +244,7 @@ def import_model_by_setting(config, mode='train'):
             base_model = Pointnet2MSG(config, activation_layer=model_output_layer).cuda()
     elif config['backbone'] == 'pointnet2_meta':
         from ..detector.pointnet2_meta.backbone import MetaLearner
-        if 'l21_reg_rate' in config and config['l21_reg_rate'] > 0:
-            base_model = MetaLearner(config, activation_layer=model_output_layer, return_sparsity=True).cuda()
-        else:
-            base_model = MetaLearner(config, activation_layer=model_output_layer).cuda()
+        base_model = MetaLearner(config, activation_layer=model_output_layer, return_disc=True).cuda()
         if 'backbone_weights' in config:
             m = torch.load(config['backbone_weights'])
             m = {k: v for k, v in m['base_model'].items() if k.startswith(('FP_modules', 'SA_modules'))}

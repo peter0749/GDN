@@ -133,7 +133,7 @@ class MetaLearner(nn.Module):
             Whether or not to use the xyz position of a point as a feature
     """
 
-    def __init__(self, config, input_channels=0, use_xyz=True, activation_layer=None, return_sparsity=False):
+    def __init__(self, config, input_channels=0, use_xyz=True, activation_layer=None, return_disc=True):
         super(MetaLearner, self).__init__()
 
         self.config = config
@@ -144,21 +144,22 @@ class MetaLearner(nn.Module):
         self.DPP_L_size = self.config['DPP_L_size']
         self.DPP_Y_size = self.config['DPP_Y_size']
         self.max_nproto = self.config['max_nproto']
-        self.return_sparsity = return_sparsity
         self.lp_alpha = 0.99
         self.n_output_feat = np.prod(config['output_dim'])
         self.prototype_dim = 300
         self.knn = 20
+        self.return_disc = return_disc
 
-        max_memory = 64
-        res = faiss.StandardGpuResources()
-        res.setTempMemory(max_memory * 1024 * 1024)
+        #max_memory = 64
+        #res = faiss.StandardGpuResources()
+        #res.setTempMemory(max_memory * 1024 * 1024)
 
         #cfg = faiss.GpuIndexIVFFlatConfig()
-        cfg = faiss.GpuIndexFlatConfig()
-        cfg.useFloat16 = True
+        #cfg = faiss.GpuIndexFlatConfig()
+        #cfg.useFloat16 = True
         #self.gpu_index = faiss.GpuIndexIVFFlat(res, 128, 1, faiss.METRIC_L2, cfg)
-        self.gpu_index = faiss.GpuIndexFlatL2(res, 128, cfg)
+        #self.gpu_index = faiss.GpuIndexFlatL2(res, 128, cfg)
+        self.gpu_index = faiss.IndexFlatL2(128)
 
         self.backbone = Backbone(self.config, input_channels=input_channels, use_xyz=use_xyz)
 
@@ -293,7 +294,8 @@ class MetaLearner(nn.Module):
         x = self.FC_layer(x.transpose(1, 2).contiguous()) # (B, ?, k)
         x = x.transpose(1, 2).reshape(b_query, k_query, *self.output_dim)
 
-        if self.return_sparsity:
+        if self.training:
+
             # xyz: (B, N, 3)
             ind_sub = pointnet2_utils.furthest_point_sample(xyz_query, self.DPP_L_size)
             ind_sub = ind_sub.clamp(min=0, max=xyz_query.size(1) - 1)
@@ -315,7 +317,12 @@ class MetaLearner(nn.Module):
             detLI = torch.logdet(L + e.unsqueeze(0))
             detLY = torch.logdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
             logDDP = detLY - detLI
-
-            return self.activation_layer(x), inds, importance, support_to_return, -logDDP.mean()
+            if self.return_disc:
+                x_query_proto = self.prototype_l(h_query_subsampled.transpose(1, 2).contiguous()) # (B, 300, k)
+                x_query_out = self.FC_layer(x_query_proto) # (B, ?, k)
+                x_query_out = x_query_out.transpose(1, 2).reshape(b_query, k_query, *self.output_dim)
+                return self.activation_layer(x), self.activation_layer(x_query_out), inds, importance, support_to_return, -logDDP.mean()
+            else:
+                return self.activation_layer(x), inds, importance, support_to_return, -logDDP.mean()
 
         return self.activation_layer(x), inds, importance, support_to_return

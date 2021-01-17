@@ -90,6 +90,7 @@ if __name__ == '__main__':
     json.dump(config, open(config['logdir']+'/settings.json', "w"))
 
     best_tpr2 = -1.0
+    supervised_alpha = 1.0
 
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
@@ -97,6 +98,7 @@ if __name__ == '__main__':
         if config["load_task_weights"] and 'loss_state' in states and (not states['loss_state'] is None) and hasattr(loss_function, 'load_state_dict'):
             loss_function.load_state_dict(states['loss_state'])
         best_tpr2 = states['best_tpr2']
+        supervised_alpha = states['supervised_alpha']
         optimizer.load_state_dict(states['optimizer_state'])
         start_epoch = states['epoch'] + 1
         pbar.set_description('Resume from last checkpoint... ')
@@ -104,7 +106,7 @@ if __name__ == '__main__':
 
     for e in range(start_epoch,1+epochs):
         info_namespace = [
-            "Train/Loss",
+            "Train/Supervised_alpha",
             "Train/DPP_regularization",
             "Train/Uncertainty",
             "Train/Loss_q",
@@ -159,13 +161,9 @@ if __name__ == '__main__':
             optimizer.zero_grad()
 
             # pseudo-label probagation: support -> query
-            pred_q, ind_q, att_q, prototype_s, l21_q = model(pc_support, mask_support, pc_query, None)
+            pred_q, pred_qq, ind_q, att_q, prototype_s, l21_q = model(pc_support, mask_support, pc_query, None)
             # pseudo-label probagation: query -> support
-            pred_s, ind_s, att_s, prototype_q, l21_s = model(pc_query, mask_query, pc_support, None)
-            # self consistency: support -> support
-            pred_ss, ind_ss, att_ss = model(None, None, pc_support, prototype_s)[:3]
-            # self consistency: query -> query
-            pred_qq, ind_qq, att_qq = model(None, None, pc_query, prototype_q)[:3]
+            pred_s, pred_ss, ind_s, att_s, prototype_q, l21_s = model(pc_query, mask_query, pc_support, None)
 
             l21 = torch.cat((l21_q.view(-1), l21_s.view(-1))).mean()
             # Cross-Domain
@@ -178,16 +176,20 @@ if __name__ == '__main__':
             # In-Domain (self-consistency)
             (loss_qq, foreground_loss_qq, cls_loss_qq,
                 x_loss_qq, y_loss_qq, z_loss_qq,
-                rot_loss_qq, _, _) = loss_function(pred_qq, ind_qq, att_qq, volume_query)
+                rot_loss_qq, _, _) = loss_function(pred_qq, ind_q, att_q, volume_query)
             (loss_ss, foreground_loss_ss, cls_loss_ss,
                 x_loss_ss, y_loss_ss, z_loss_ss,
-                rot_loss_ss, _, _) = loss_function(pred_ss, ind_ss, att_ss, volume_support)
-            loss = loss_q + loss_s + loss_qq + loss_ss + config['l21_reg_rate'] * l21
+                rot_loss_ss, _, _) = loss_function(pred_ss, ind_s, att_s, volume_support)
+            loss  = loss_q * (1.0 - supervised_alpha) + loss_qq * supervised_alpha
+            loss += loss_s * (1.0 - supervised_alpha) + loss_ss * supervised_alpha
+            loss += config['l21_reg_rate'] * l21
+            supervised_alpha *= config["supervised_alpha_decay"]
+            supervised_alpha = max(config["supervised_alpha_min"], supervised_alpha)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0, norm_type=2)
             optimizer.step()
             info += np.array([
-                    loss.item(),
+                    supervised_alpha,
                     l21.item(),
                     uncert.item(),
                     loss_q.item(),
@@ -220,7 +222,7 @@ if __name__ == '__main__':
                     rot_loss_ss,
                     1
                 ],dtype=np.float32)
-            pbar.set_description('[%d/%d][%d/%d]: loss_s: %.2f loss_q: %.2f loss_ss: %.2f loss_qq: %.2f reg: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_s.item(), loss_q.item(), loss_ss.item(), loss_qq.item(), l21.item()))
+            pbar.set_description('[%d/%d][%d/%d]: loss_s: %.2f loss_q: %.2f loss_ss: %.2f loss_qq: %.2f reg: %.2f alpha: %.2f'%(e, epochs, info[-1], len(dataloader_query), loss_s.item(), loss_q.item(), loss_ss.item(), loss_qq.item(), l21.item(), supervised_alpha))
             pbar.update(1)
             write_hwstat(config['logdir'])
 
@@ -311,6 +313,7 @@ if __name__ == '__main__':
                         'base_model': base_model.state_dict(),
                         'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                         'tpr_2': tpr_2,
+                        'supervised_alpha': supervised_alpha,
                         'mAP': mean_mAP,
                         'best_tpr2': best_tpr2,
                         'optimizer_state': optimizer.state_dict(),
@@ -320,6 +323,7 @@ if __name__ == '__main__':
                     'base_model': base_model.state_dict(),
                     'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                     'tpr_2': tpr_2,
+                    'supervised_alpha': supervised_alpha,
                     'mAP': mean_mAP,
                     'best_tpr2': best_tpr2,
                     'optimizer_state': optimizer.state_dict(),
