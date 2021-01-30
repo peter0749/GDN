@@ -1,5 +1,6 @@
 # coding: utf-8
 
+import open3d # import first to avoid segfault
 import sys
 import os
 import glob
@@ -13,7 +14,6 @@ import warnings
 from tqdm import tqdm
 import matplotlib
 import multiprocessing
-#multiprocessing.set_start_method('forkserver', force=True)
 from multiprocessing import Pool
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -26,12 +26,6 @@ except ImportError:
     _VISUALIZE_USE_PCL = False
     print("Failed to import pcl. The point clouds will be display in grayscale.")
 
-try:
-    from mayavi import mlab
-    _HAS_VIS_CAPABILITY = True
-except ImportError:
-    _HAS_VIS_CAPABILITY = False 
-    print("Failed to import mayavi. Visualization is disabled.")
 
 from gdn.utils import *
 
@@ -145,8 +139,12 @@ if __name__ == '__main__':
     with open(args.config, "r") as fp:
         config = json.load(fp)
 
-    if not _HAS_VIS_CAPABILITY:
-        args.use_vis = False
+    if args.use_vis:
+        try:
+            from mayavi import mlab
+        except ImportError:
+            args.use_vis = False
+            print("Failed to import mayavi. Visualization is disabled.")
 
     pred_prefix = args.pred
     suffix = '.npy'
