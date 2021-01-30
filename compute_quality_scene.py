@@ -70,7 +70,9 @@ def compute_match(ps, pc_id, predict_prefix='', pc_prefix='', rot_th=5.0, topK=1
         for n_cnt, (score, pc_id_m, row_n) in enumerate(ps):
             assert pc_id  == pc_id_m
             pose = pred_poses_npy[row_n] # load corresponding prediction ordered by confidence
-            pool_results.append(pool.apply_async(eval_fn, (pc_npy, pose, rot_th, config, args.verbose)))
+            gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width']+1e-5, config['hand_height'], pose, config['thickness_side'])
+            enclosed_idx = crop_index(pc_npy, gripper_outer1, gripper_outer2)
+            pool_results.append(pool.apply_async(eval_fn, (pc_npy[enclosed_idx], pose, rot_th, config, args.verbose)))
         results = [ r.get() for r in pool_results ]
 
     if use_vis:
@@ -156,7 +158,6 @@ if __name__ == '__main__':
         pred_files = [args.specify]
     else:
         pred_files = glob.glob(pred_prefix + '/*.meta')
-    #np.random.shuffle(pred_files)
     APs_at_threshold = {}
     pbar = tqdm(total=len(pred_files))
     for path in pred_files:
