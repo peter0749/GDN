@@ -137,14 +137,15 @@ def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gr
 
     '''
     pc_o3d = o3d.geometry.PointCloud()
-    pc_o3d.points = o3d.utility.Vector3dVector(np.append(p_l[l_contacts], p_r[r_contacts], axis=0))
+    pc_o3d.points = o3d.utility.Vector3dVector(np.append(p_l[list(l_contacts)], p_r[list(r_contacts)], axis=0))
     o3d.io.write_point_cloud("contact-post.ply", pc_o3d)
-    '''
 
-    '''
-    pc_o3d = o3d.geometry.PointCloud()
-    pc_o3d.points = o3d.utility.Vector3dVector(np.append(p_l[match_l], p_r[match_r], axis=0))
-    o3d.io.write_point_cloud("antipodal.ply", pc_o3d)
+    d = np.append(p_l[list(match_l)], p_r[list(match_r)], axis=0)
+    if len(d) > 50 and viable>viable_th:
+        pc_o3d = o3d.geometry.PointCloud()
+        pc_o3d.points = o3d.utility.Vector3dVector(d)
+        o3d.io.write_point_cloud("antipodal.ply", pc_o3d)
+        raise RuntimeError
     '''
 
     return viable>viable_th, l_viable, r_viable, len(l_contacts), len(r_contacts), n_antipodal_pairs
