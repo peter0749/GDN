@@ -3,6 +3,7 @@ import itertools
 import numpy as np
 import numba as nb
 from pykdtree.kdtree import KDTree
+from scipy.spatial import KDTree as sKDTree
 
 def estimate_normals(pc, camera_location, radius=0.003, knn=20):
     pc_o3d = o3d.geometry.PointCloud()
@@ -30,7 +31,7 @@ def force_closure(p1, p2, n1, n2, angle, use_abs_value=True):
             return 0 # outside of friction cone
     return 1
 
-def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gripper_width=0.05, thickness_side=0.01, contact_r=0.003, step_size=0.001, viable_th=5, verbose=True):
+def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gripper_width=0.05, thickness_side=0.01, contact_r=0.003, search_r=0.005, step_size=0.001, viable_th=5, verbose=True):
     # crop: (n, 3)
     # pose: (3, 4)
     max_rad = max_degree / 180.0 * np.pi
@@ -96,7 +97,7 @@ def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gr
     '''
     pc_o3d = o3d.geometry.PointCloud()
     pc_o3d.points = o3d.utility.Vector3dVector(crop_c)
-    o3d.io.write_point_cloud("contact.ply", pc_o3d)
+    o3d.io.write_point_cloud("contact-pre.ply", pc_o3d)
     '''
 
     p_l = crop_c[crop_c[:,1]<0].astype(np.float32) # left point cloud
@@ -106,33 +107,47 @@ def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gr
     n_l = estimate_normals(p_l, [0, -gripper_width*100, 0]).astype(np.float32) # points outward
     n_r = estimate_normals(p_r, [0,  gripper_width*100, 0]).astype(np.float32) # points outward
 
-    if verbose:
-        print("Found %d contant points on the left"%len(p_l))
-        print("Found %d contant points on the right"%len(p_r))
+    l_frame = p_l - np.array([0, l_contact, 0], dtype=np.float32) # (num_l, 3)
+    r_frame = p_r - np.array([0, r_contact, 0], dtype=np.float32) # (num_r, 3)
 
-    match_l = np.zeros(len(p_l), dtype=np.int32)
-    match_r = np.zeros(len(p_r), dtype=np.int32)
-    for l, r in itertools.product(range(len(p_l)), range(len(p_r))):
-        is_force_closure = force_closure(p_l[l], p_r[r], n_l[l], n_r[r], max_rad) # test if force closure
-        match_l[l] += is_force_closure
-        match_r[r] += is_force_closure
-    l_viable = (match_l>0).sum()
-    r_viable = (match_r>0).sum()
-    '''
-    match_l = np.zeros(len(p_l), dtype=np.bool)
-    match_r = np.zeros(len(p_r), dtype=np.bool)
-    for l in range(len(p_l)):
-        for r in range(len(p_r)):
-            if force_closure(p_l[l], p_r[r], n_l[l], n_r[r], max_rad):
-                match_l[l] = True
-                match_r[r] = True
-                break
-    l_viable = match_l.sum()
-    r_viable = match_r.sum()
-    '''
+    l_tree = sKDTree(l_frame)
+    index_l = l_tree.query_ball_point(r_frame, search_r, p=2.0)
+
+    match_l = set()
+    match_r = set()
+    l_contacts = set()
+    r_contacts = set()
+    n_antipodal_pairs = 0
+    for r, ll in enumerate(index_l):
+        for l in ll:
+            l_contacts.add(l)
+            r_contacts.add(r)
+            if force_closure(p_l[l], p_r[r], n_l[l], n_r[r], max_rad): # test if force closure
+                match_l.add(l)
+                match_r.add(r)
+                n_antipodal_pairs += 1
+    l_viable = len(match_l)
+    r_viable = len(match_r)
+    viable = min(l_viable, r_viable)
     if verbose:
         print("l_viable: %d, r_viable: %d"%(l_viable, r_viable))
-    return min(l_viable, r_viable)>viable_th, l_viable, r_viable, len(p_l), len(p_r)
+        print("Found %d contant points on the left"%len(l_contacts))
+        print("Found %d contant points on the right"%len(r_contacts))
+        print("Found %d antipodal pairs on the right"%n_antipodal_pairs)
+
+    '''
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(np.append(p_l[l_contacts], p_r[r_contacts], axis=0))
+    o3d.io.write_point_cloud("contact-post.ply", pc_o3d)
+    '''
+
+    '''
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(np.append(p_l[match_l], p_r[match_r], axis=0))
+    o3d.io.write_point_cloud("antipodal.ply", pc_o3d)
+    '''
+
+    return viable>viable_th, l_viable, r_viable, len(l_contacts), len(r_contacts), n_antipodal_pairs
 
 @nb.jit(nopython=True, nogil=True)
 def hand_match(pred, target, rot_th=5, trans_th=0.02):
