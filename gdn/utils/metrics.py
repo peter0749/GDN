@@ -1,7 +1,138 @@
+import open3d as o3d
+import itertools
 import numpy as np
 import numba as nb
 from pykdtree.kdtree import KDTree
 
+def estimate_normals(pc, camera_location, radius=0.003, knn=20):
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(pc)
+    pc_o3d.estimate_normals(
+        search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=knn))
+    pc_o3d.orient_normals_towards_camera_location(camera_location)
+    n = np.asarray(pc_o3d.normals, dtype=np.float32)
+    return n
+
+@nb.jit(nopython=True, nogil=True)
+def force_closure(p1, p2, n1, n2, angle, use_abs_value=True):
+    n1, n2 = -n1, -n2 # inward facing normals
+
+    for normal, contact, other_contact in [(n1, p1, p2), (n2, p2, p1)]:
+        diff = other_contact - contact
+        normal_proj = np.dot(normal, diff) / np.linalg.norm(normal)
+        if use_abs_value:
+            normal_proj = np.fabs(np.dot(normal, diff)) / np.linalg.norm(normal)
+
+        if normal_proj < 0:
+            return 0 # wrong side
+        alpha = np.arccos(normal_proj / np.linalg.norm(diff))
+        if alpha > angle:
+            return 0 # outside of friction cone
+    return 1
+
+def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gripper_width=0.05, thickness_side=0.01, contact_r=0.003, step_size=0.001, viable_th=5, verbose=True):
+    # crop: (n, 3)
+    # pose: (3, 4)
+    max_rad = max_degree / 180.0 * np.pi
+
+    crop = crop.reshape(-1, 3)
+
+    '''
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(crop)
+    o3d.io.write_point_cloud("original.ply", pc_o3d)
+    '''
+
+    eye = np.eye(4)
+    eye[:3,:4] = pose
+    pose = eye
+    del eye
+    crop_c = np.pad(crop.T, ((0,1),(0,0)), mode='constant', constant_values=1.0) # x, y, z, w=1, (4,n)
+    inv = np.eye(4)
+    inv[:3,:3] = pose[:3,:3].T
+    inv[:3,3:4] = -inv[:3,:3]@pose[:3,3:4] # (3, 3) x (3, 1) -> (3, 1)
+    crop_c = np.dot(inv, crop_c) # (4,4) x (4,n) -> (4,n)
+    crop_c = crop_c[:3].T # (n, 3) -- transformed
+
+    '''
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(crop_c)
+    o3d.io.write_point_cloud("tf.ply", pc_o3d)
+    '''
+
+    # Crop ROI
+    crop_c = crop_c[crop_c[:,0] > 0]
+    crop_c = crop_c[crop_c[:,0] < hand_height]
+    crop_c = crop_c[crop_c[:,1] > -gripper_width/2.0]
+    crop_c = crop_c[crop_c[:,1] <  gripper_width/2.0]
+    crop_c = crop_c[crop_c[:,2] > -thickness_side/2.0]
+    crop_c = crop_c[crop_c[:,2] <  thickness_side/2.0]
+
+    '''
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(crop_c)
+    o3d.io.write_point_cloud("roi.ply", pc_o3d)
+    '''
+
+    # sweep along gripper y-axis to simulate closing the gripper
+    r_contact = gripper_width/2.0
+    while r_contact > 0:
+        if (crop_c[:,1] > r_contact).any():
+            break
+        r_contact -= step_size
+    if r_contact < 0:
+        return False, 0, 0, 0, 0
+    l_contact = -gripper_width/2.0
+    while l_contact < 0:
+        if (crop_c[:,1] < l_contact).any():
+            break
+        l_contact += step_size
+    if l_contact > 0:
+        return False, 0, 0, 0, 0
+
+    # crop contact points
+    crop_c = crop_c[(crop_c[:,1] < (l_contact+contact_r)) | (crop_c[:,1] > (r_contact-contact_r))]
+
+    '''
+    pc_o3d = o3d.geometry.PointCloud()
+    pc_o3d.points = o3d.utility.Vector3dVector(crop_c)
+    o3d.io.write_point_cloud("contact.ply", pc_o3d)
+    '''
+
+    p_l = crop_c[crop_c[:,1]<0].astype(np.float32) # left point cloud
+    p_r = crop_c[crop_c[:,1]>0].astype(np.float32) # right point cloud
+    if len(p_l) == 0 or len(p_r) == 0:
+        return False, 0, 0, 0, 0
+    n_l = estimate_normals(p_l, [0, -gripper_width*100, 0]).astype(np.float32) # points outward
+    n_r = estimate_normals(p_r, [0,  gripper_width*100, 0]).astype(np.float32) # points outward
+
+    if verbose:
+        print("Found %d contant points on the left"%len(p_l))
+        print("Found %d contant points on the right"%len(p_r))
+
+    match_l = np.zeros(len(p_l), dtype=np.int32)
+    match_r = np.zeros(len(p_r), dtype=np.int32)
+    for l, r in itertools.product(range(len(p_l)), range(len(p_r))):
+        is_force_closure = force_closure(p_l[l], p_r[r], n_l[l], n_r[r], max_rad) # test if force closure
+        match_l[l] += is_force_closure
+        match_r[r] += is_force_closure
+    l_viable = (match_l>0).sum()
+    r_viable = (match_r>0).sum()
+    '''
+    match_l = np.zeros(len(p_l), dtype=np.bool)
+    match_r = np.zeros(len(p_r), dtype=np.bool)
+    for l in range(len(p_l)):
+        for r in range(len(p_r)):
+            if force_closure(p_l[l], p_r[r], n_l[l], n_r[r], max_rad):
+                match_l[l] = True
+                match_r[r] = True
+                break
+    l_viable = match_l.sum()
+    r_viable = match_r.sum()
+    '''
+    if verbose:
+        print("l_viable: %d, r_viable: %d"%(l_viable, r_viable))
+    return min(l_viable, r_viable)>viable_th, l_viable, r_viable, len(p_l), len(p_r)
 
 @nb.jit(nopython=True, nogil=True)
 def hand_match(pred, target, rot_th=5, trans_th=0.02):
