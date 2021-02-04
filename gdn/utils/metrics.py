@@ -5,7 +5,7 @@ import numba as nb
 from pykdtree.kdtree import KDTree
 from scipy.spatial import KDTree as sKDTree
 
-def estimate_normals(pc, camera_location, radius=0.003, knn=20):
+def estimate_normals(pc, camera_location, radius=0.003, knn=30):
     pc_o3d = o3d.geometry.PointCloud()
     pc_o3d.points = o3d.utility.Vector3dVector(pc)
     pc_o3d.estimate_normals(
@@ -31,7 +31,7 @@ def force_closure(p1, p2, n1, n2, angle, use_abs_value=True):
             return 0 # outside of friction cone
     return 1
 
-def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gripper_width=0.05, thickness_side=0.01, contact_r=0.003, search_r=0.005, step_size=0.001, viable_th=5, verbose=True):
+def reevaluate_antipodal_grasp(crop, pose, max_degree=30.0, hand_height=0.05, gripper_width=0.05, thickness_side=0.01, contact_r=0.003, search_r=0.005, step_size=0.001, viable_th=3, verbose=True):
     # crop: (n, 3)
     # pose: (3, 4)
     max_rad = max_degree / 180.0 * np.pi

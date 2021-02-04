@@ -58,16 +58,20 @@ def eval_fn(pc_npy, pose, rot_th, config, verbose):
     return matched
 
 def compute_match(ps, pc_id, predict_prefix='', pc_prefix='', rot_th=5.0, topK=10, vis_conf=False, vis_gamma=0.6, vis_proposal=False, use_vis=False):
+    clip = topK * 2
     pc_npy = np.load(pc_prefix+'/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
     if use_vis:
-        fig = mlab.figure(bgcolor=(1,1,1))
-        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], scale_factor=0.0015, scale_mode='none', mode='sphere', color=(0.7,0.7,0.7), opacity=1.0, figure=fig)
+        fig = mlab.figure(bgcolor=(0,0,0))
+        col = (pc_npy[:,2] - pc_npy[:,2].min()) /                 (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33
+        mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], col, scale_factor=0.0015, scale_mode='none', mode='sphere', colormap='plasma', opacity=1.0, figure=fig)
     results = []
-    pred_poses_npy = np.load(predict_prefix+'/'+pc_id+'.npy')
+    pred_poses_npy = np.load(predict_prefix+'/'+pc_id+'.npy')[:clip]
 
     with Pool(processes=args.workers) as pool:
         pool_results = []
         for n_cnt, (score, pc_id_m, row_n) in enumerate(ps):
+            if n_cnt == clip:
+                break
             assert pc_id  == pc_id_m
             pose = pred_poses_npy[row_n] # load corresponding prediction ordered by confidence
             gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width']+1e-5, config['hand_height'], pose, config['thickness_side'])
@@ -77,6 +81,8 @@ def compute_match(ps, pc_id, predict_prefix='', pc_prefix='', rot_th=5.0, topK=1
 
     if use_vis:
         for n_cnt, (score, pc_id_m, row_n) in enumerate(ps):
+            if n_cnt == clip:
+                break
             pose = pred_poses_npy[row_n] # load corresponding prediction ordered by confidence
             matched = results[n_cnt]
             if use_vis and n_cnt<topK:
@@ -120,14 +126,14 @@ def AP(results, topK=10):
 
 if __name__ == '__main__':
     # In[14]:
-    thresholds = [15, 30]
+    thresholds = [30,]
     parser = ArgumentParser()
     parser.add_argument("config", type=str, help="Path to config file")
     parser.add_argument("pred", type=str, help="Prediction prefix")
     parser.add_argument("output", type=str, help="Output file in JSON format")
     parser.add_argument("--pc_path", type=str, required=True, help="Point cloud path for visualization")
     parser.add_argument("--top_K", type=int, default=10, help="Top-K for AP computation [10]")
-    parser.add_argument("--workers", type=int, default=8, help="")
+    parser.add_argument("--workers", type=int, default=2, help="")
     parser.add_argument("--specify", type=str, default="", help="")
     parser.add_argument("--visualize_confidence", action="store_true", help="Visualize confidence of grasps")
     parser.add_argument("--visualize_proposal", action="store_true", help="")
@@ -158,6 +164,7 @@ if __name__ == '__main__':
         pred_files = [args.specify]
     else:
         pred_files = glob.glob(pred_prefix + '/*.meta')
+    np.random.shuffle(pred_files)
     APs_at_threshold = {}
     pbar = tqdm(total=len(pred_files))
     for path in pred_files:
