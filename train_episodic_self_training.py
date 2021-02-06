@@ -57,7 +57,8 @@ if __name__ == '__main__':
     if not os.path.exists(config['logdir']+'/ckpt'):
         os.makedirs(config['logdir']+'/ckpt')
 
-    representation, dataset, _, base_model, model, optimizer, loss_function = import_model_by_setting(config)
+    representation, dataset, _, base_model, __, optimizer, loss_function = import_model_by_setting(config)
+    model = base_model
     device = next(base_model.parameters()).device
     dataset.train()
     dataloader = DataLoader(dataset,
@@ -78,6 +79,7 @@ if __name__ == '__main__':
     n_attempt = 0
     n_success = 0
     loss = 0.0
+    sampling_std = config['annealing_max']
 
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
@@ -91,6 +93,8 @@ if __name__ == '__main__':
             n_attempt = states['n_attempt']
         if 'n_success' in states:
             n_success = states['n_success']
+        if 'sampling_std' in states:
+            sampling_std = states['sampling_std']
 
     model.train()
     dataset.train()
@@ -105,7 +109,8 @@ if __name__ == '__main__':
         pc_clean = pc_clean.numpy().astype(np.float32)
         with torch.no_grad():
             pc_cuda = torch.from_numpy(pc).cuda()
-            pred, ind, att, l21 = model(pc_cuda)
+            pred, ind, att = model.sampling(pc_cuda, std=sampling_std)
+            sampling_std = max(config['annealing_min'], sampling_std * config['annealing_t'])
             pc_subsampled = pointnet2_utils.gather_operation(pc_cuda.transpose(1, 2).contiguous(), ind)
             pc_npy = pc_subsampled.cpu().transpose(1, 2).numpy().astype(np.float32)
             pred = pred.cpu().numpy().astype(np.float32)
@@ -118,13 +123,12 @@ if __name__ == '__main__':
                         config['thickness_side'],
                         config['rot_th'],
                         config['trans_th'],
-                        500, # max number of candidate
+                        300, # max number of candidate
                         -np.inf, # threshold of candidate
-                        500,  # max number of grasp in NMS
+                        300,  # max number of grasp in NMS
                         config['num_workers'],    # number of threads
                         True  # use NMS
             ), dtype=np.float32) # (?, 3, 4)
-        updated = False
         for antipodal_angle in [15, 30, 45]:
             print("Testing with antipodal angle: %d"%antipodal_angle)
             sampled_grasps = []
@@ -151,19 +155,23 @@ if __name__ == '__main__':
                         sampled_grasps.append((pred_poses[n], idx))
             cases = cases / cases.sum()
             print('viable / collision / empty: ', cases)
+            if cases[0] == 0:
+                print('No viable grasps.')
+                antipodal_angle = 180
+                break
             if len(sampled_grasps) > 0:
                 memory_bank.append((pc[0], sampled_grasps)) # add to memory
-                updated = True
                 break
         n_attempt += len(pred_poses)
         if antipodal_angle < 31:
             n_success += len(sampled_grasps)
-        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f | memory_bank: %d / %d (%d)"%(ite, n_attempt, n_success, antipodal_angle, loss, len(memory_bank), config['memory_bank_size'], config['batch_size']))
+        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f | std: %.4f | memory_bank: %d / %d (%d)"%(ite, n_attempt, n_success, antipodal_angle, loss, sampling_std, len(memory_bank), config['memory_bank_size'], config['batch_size']))
         logger.add_scalar('n_attempt_vs_n_success_r', n_success / n_attempt, n_attempt)
         logger.add_scalar('n_attempt_vs_n_success', n_success, n_attempt)
         logger.add_scalar('n_iter_vs_n_success_r', n_success / ite, ite)
         logger.add_scalar('n_iter_vs_n_success', n_success, ite)
-        if updated and len(memory_bank) >= config['batch_size']:
+        logger.add_scalar('sampling_std', sampling_std, ite)
+        if len(memory_bank) >= config['batch_size']:
             feature_volume_batch = np.zeros((config['batch_size'], config['input_points'], *config['output_dim']), dtype=np.float32) # TODO: can make it rolling
             pc_batch = []
             for b, memory_i in enumerate(np.random.choice(len(memory_bank), config['batch_size'], replace=False)):
@@ -186,9 +194,11 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             pred, ind, att, l21 = model(pc)
             l21 = l21.mean()
+            logger.add_scalar('dpp', l21, ite)
             (loss, foreground_loss, cls_loss,
                 x_loss, y_loss, z_loss,
                 rot_loss, ws, uncert) = loss_function(pred, ind, att, volume)
+            logger.add_scalar('loss', loss, ite)
             loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
             loss.backward()
             optimizer.step()
@@ -199,6 +209,7 @@ if __name__ == '__main__':
                     'ite': ite,
                     'n_attempt': n_attempt,
                     'n_success': n_success,
+                    'sampling_std': sampling_std,
                     }, config['logdir'] + '/last.ckpt')
 
     logger.close()

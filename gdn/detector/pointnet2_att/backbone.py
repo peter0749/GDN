@@ -113,6 +113,38 @@ class Pointnet2MSG(nn.Module):
 
         return xyz, features
 
+    def sampling(self, pointcloud, std=1e-3):
+        xyz, features = self._break_up_pc(pointcloud)
+
+        l_xyz, l_features = [xyz], [features]
+        for i in range(len(self.SA_modules)):
+            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+            l_xyz.append(li_xyz)
+            l_features.append(li_features)
+
+        for i in range(-1, -(len(self.FP_modules) + 1), -1):
+            l_features[i - 1] = self.FP_modules[i](
+                l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
+            )
+
+        h = l_features[0] # (B, 128, N)
+        ht = h.transpose(1, 2).contiguous()
+        importance = self.importance_sampling(ht)[...,0] # (B, N)
+        importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
+        inds = importance_topk.indices.int() # (B, k)
+        att  = importance_topk.values  # (B, k)
+        h_subsampled = pointnet2_utils.gather_operation(h, inds) # (B, 128, k)
+
+        # Add random noise sampled from normal dist
+        h_subsampled = h_subsampled + torch.randn(*h_subsampled.size(), dtype=h_subsampled.dtype, device=h_subsampled.device) * std
+
+        # h_att = att.unsqueeze(1) * h_subsampled # (B, 1, k) * (B, 128, k) -> (B, 128, k)
+        # x = self.FC_layer(h_att).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
+        x = self.FC_layer(h_subsampled).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
+        x = x.view(x.size(0), x.size(1), *self.output_dim)
+
+        return self.activation_layer(x), inds, importance
+
     def forward(self, pointcloud):
         # type: (Pointnet2MSG, torch.cuda.FloatTensor) -> pt_utils.Seq
         r"""
