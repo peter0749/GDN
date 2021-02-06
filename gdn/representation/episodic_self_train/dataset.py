@@ -55,7 +55,7 @@ class GraspDataset(Dataset):
         id_ = self.ids[item_idx]
         # Check if the pre-computed results exist
         config = self.config
-        pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
+        pc_scene = np.load(self.scene_path + '/' + id_) # (#npt, 3)
 
         # Normalize
         pc_origin = (pc_scene.max(axis=0) + pc_scene.min(axis=0)) / 2.0
@@ -112,4 +112,4 @@ class GraspDataset(Dataset):
             idx = np.random.choice(len(pc_distorted), config['input_points'], replace=False)
             pc_distorted = pc_distorted[idx]
 
-        return pc_distorted, pc_scene, pc_origin
+        return pc_distorted, pc_scene, pc_origin, id_

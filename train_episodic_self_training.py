@@ -52,7 +52,7 @@ if __name__ == '__main__':
     with open(args.config, 'r') as fp:
         config = json.load(fp)
 
-    episodic_batch = deque(maxlen=config['batch_size'])
+    memory_bank = deque(maxlen=config['memory_bank_size'])
 
     if not os.path.exists(config['logdir']+'/ckpt'):
         os.makedirs(config['logdir']+'/ckpt')
@@ -75,21 +75,22 @@ if __name__ == '__main__':
     logger = SummaryWriter(config['logdir'])
     json.dump(config, open(config['logdir']+'/settings.json', "w"))
 
-    best_tpr2 = -1.0
+    n_attempt = 0
+    n_success = 0
+    loss = 0.0
 
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
         base_model.load_state_dict(states['base_model'])
         if 'loss_state' in states and (not states['loss_state'] is None) and hasattr(loss_function, 'load_state_dict'):
             loss_function.load_state_dict(states['loss_state'])
-        best_tpr2 = states['best_tpr2']
         optimizer.load_state_dict(states['optimizer_state'])
         if 'ite' in states:
             start_ite = states['ite'] + 1
-
-    n_attempt = 0
-    n_success = 0
-    loss = 0.0
+        if 'n_attempt' in states:
+            n_attempt = states['n_attempt']
+        if 'n_success' in states:
+            n_success = states['n_success']
 
     model.train()
     dataset.train()
@@ -151,22 +152,22 @@ if __name__ == '__main__':
             cases = cases / cases.sum()
             print('viable / collision / empty: ', cases)
             if len(sampled_grasps) > 0:
-                episodic_batch.append((pc[0], sampled_grasps)) # add to memory
+                memory_bank.append((pc[0], sampled_grasps)) # add to memory
                 updated = True
                 break
         n_attempt += len(pred_poses)
         if antipodal_angle < 31:
             n_success += len(sampled_grasps)
-        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f"%(ite, n_attempt, n_success, antipodal_angle, loss))
+        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f | memory_bank: %d / %d (%d)"%(ite, n_attempt, n_success, antipodal_angle, loss, len(memory_bank), config['memory_bank_size'], config['batch_size']))
         logger.add_scalar('n_attempt_vs_n_success_r', n_success / n_attempt, n_attempt)
         logger.add_scalar('n_attempt_vs_n_success', n_success, n_attempt)
         logger.add_scalar('n_iter_vs_n_success_r', n_success / ite, ite)
         logger.add_scalar('n_iter_vs_n_success', n_success, ite)
-        if updated and len(episodic_batch) == config['batch_size']:
+        if updated and len(memory_bank) >= config['batch_size']:
             feature_volume_batch = np.zeros((config['batch_size'], config['input_points'], *config['output_dim']), dtype=np.float32) # TODO: can make it rolling
             pc_batch = []
-            for b in range(config['batch_size']):
-                pc, successful_grasps = episodic_batch[b]
+            for b, memory_i in enumerate(np.random.choice(len(memory_bank), config['batch_size'], replace=False)):
+                pc, successful_grasps = memory_bank[memory_i]
                 pc_batch.append(pc)
                 for pose, ind in successful_grasps:
                     if len(ind) == 0:
@@ -196,6 +197,8 @@ if __name__ == '__main__':
                     'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
                     'optimizer_state': optimizer.state_dict(),
                     'ite': ite,
+                    'n_attempt': n_attempt,
+                    'n_success': n_success,
                     }, config['logdir'] + '/last.ckpt')
 
     logger.close()
