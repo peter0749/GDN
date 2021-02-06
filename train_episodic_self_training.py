@@ -5,6 +5,7 @@ import warnings
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 from collections import deque
+from multiprocessing import Pool
 
 import numba as nb
 warnings.filterwarnings('ignore', category=nb.NumbaPendingDeprecationWarning)
@@ -13,7 +14,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-torch.backends.cudnn.benchmark = True
+
+from nms import decode_euler_feature, initEigen
+initEigen(0)
 
 from pointnet2.utils import pointnet2_utils
 
@@ -30,6 +33,14 @@ def parse_args():
     parser.add_argument("config", type=str, help="Path to configuration file (in JSON)")
     args = parser.parse_args()
     return args
+
+def eval_fn(pc_npy, pose, angle, config):
+    matched = reevaluate_antipodal_grasp(pc_npy, pose, max_degree=angle,
+                hand_height = config['hand_height'],
+                gripper_width = config['gripper_width'],
+                thickness_side = config['thickness_side'],
+                verbose=False)[0]
+    return matched
 
 if __name__ == '__main__':
     # In[14]:
@@ -52,7 +63,7 @@ if __name__ == '__main__':
     dataloader = DataLoader(dataset,
                             batch_size=1,
                             num_workers=config['num_workers_dataloader'],
-                            pin_memory=True,
+                            pin_memory=False,
                             shuffle=True,
                             collate_fn=None)
     config = dataset.get_config()
@@ -73,7 +84,8 @@ if __name__ == '__main__':
             loss_function.load_state_dict(states['loss_state'])
         best_tpr2 = states['best_tpr2']
         optimizer.load_state_dict(states['optimizer_state'])
-        start_ite = states['ite'] + 1
+        if 'ite' in states:
+            start_ite = states['ite'] + 1
 
     n_attempt = 0
     n_success = 0
@@ -84,10 +96,12 @@ if __name__ == '__main__':
     batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
     for ite in range(1, iterations+1):
         try:
-            pc, pc_clean, pc_origin = next(batch_iterator)
+            pc, pc_clean = next(batch_iterator)[:2]
         except StopIteration:
             batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
-            pc, pc_clean, pc_origin = next(batch_iterator)
+            pc, pc_clean = next(batch_iterator)[:2]
+        pc = pc.numpy().astype(np.float32)
+        pc_clean = pc_clean.numpy().astype(np.float32)
         with torch.no_grad():
             pc_cuda = torch.from_numpy(pc).cuda()
             pred, ind, att, l21 = model(pc_cuda)
@@ -105,50 +119,68 @@ if __name__ == '__main__':
                         config['trans_th'],
                         500, # max number of candidate
                         -np.inf, # threshold of candidate
-                        100,  # max number of grasp in NMS
+                        500,  # max number of grasp in NMS
                         config['num_workers'],    # number of threads
                         True  # use NMS
             ), dtype=np.float32) # (?, 3, 4)
-        successful_grasps = []
-        with Pool(processes=args.workers) as pool:
-            pool_results = []
-            for n, pose in enumerate(pred_poses):
-                pose_in_clean = np.copy(pose)
-                pose_in_clean[:3, 3:4] += pc_origin.reshape(3, 1)
-                gripper_outer1, gripper_outer2 = generate_gripper_edge(self.config['gripper_width']+self.config['thickness']*2, self.config['hand_height'], pose_in_clean, self.config['thickness_side'], backward=0.20)[1:]
-                gripper_inner1, gripper_inner2 = generate_gripper_edge(self.config['gripper_width'], self.config['hand_height'], pose_in_clean, self.config['thickness_side'])[1:]
-                outer_pts = crop_index(pc_clean, gripper_outer1, gripper_outer2)
-                if len(outer_pts) == 0:
-                    continue
-                inner_pts = crop_index(pc_clean, gripper_inner1, gripper_inner2, search_idx=outer_pts)
-                if len(outer_pts) - len(np.intersect1d(inner_pts, outer_pts)) > 3:
-                    continue
-                pool_results.append((n, inner_pts, pool.apply_async(eval_fn, (pc_clean[outer_pts], pose, config))))
-            for n, (idx, r) in pool_results:
-                if r.get():
-                    successful_grasps.append((pred_poses[n], idx))
-        if len(successful_grasps) > 0:
-            episodic_batch.append((pc, successful_grasps)) # add to memory
+        updated = False
+        for antipodal_angle in [15, 30, 45]:
+            print("Testing with antipodal angle: %d"%antipodal_angle)
+            sampled_grasps = []
+            cases = np.zeros(3, dtype=np.float32)
+            with Pool(processes=config['num_workers']) as pool:
+                pool_results = []
+                for n, pose in enumerate(pred_poses):
+                    gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width']+config['thickness']*2, config['hand_height'], pose, config['thickness_side'], backward=0.20)[1:]
+                    gripper_inner1, gripper_inner2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])[1:]
+                    outer_pts = crop_index(pc_clean[0], gripper_outer1, gripper_outer2)
+                    if len(outer_pts) == 0:
+                        cases[2] += 1
+                        continue
+                    inner_pts = crop_index(pc_clean[0], gripper_inner1, gripper_inner2, search_idx=outer_pts)
+                    if len(outer_pts) - len(np.intersect1d(inner_pts, outer_pts)) > 3:
+                        cases[1] += 1
+                        continue
+                    gripper_inner1, gripper_inner2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])[1:]
+                    inner_pts = crop_index(pc[0], gripper_inner1, gripper_inner2)
+                    pool_results.append((n, inner_pts, pool.apply_async(eval_fn, (pc_clean[0,outer_pts], pose, antipodal_angle, config))))
+                    cases[0] += 1
+                for n, idx, r in pool_results:
+                    if r.get():
+                        sampled_grasps.append((pred_poses[n], idx))
+            cases = cases / cases.sum()
+            print('viable / collision / empty: ', cases)
+            if len(sampled_grasps) > 0:
+                episodic_batch.append((pc[0], sampled_grasps)) # add to memory
+                updated = True
+                break
         n_attempt += len(pred_poses)
-        n_success += len(successful_grasps)
-        print("iteration: %d | #attempt: %d | #success: %d | loss: %.2f"%(ite, n_attempt, n_success, loss))
-        if len(episodic_batch) == config['batch_size']:
-            feature_volume_batch = np.zeros((config['batch_size'], *config['output_dim']), dtype=np.float32) # TODO: can make it rolling
+        if antipodal_angle < 31:
+            n_success += len(sampled_grasps)
+        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f"%(ite, n_attempt, n_success, antipodal_angle, loss))
+        logger.add_scalar('n_attempt_vs_n_success_r', n_success / n_attempt, n_attempt)
+        logger.add_scalar('n_attempt_vs_n_success', n_success, n_attempt)
+        logger.add_scalar('n_iter_vs_n_success_r', n_success / ite, ite)
+        logger.add_scalar('n_iter_vs_n_success', n_success, ite)
+        if updated and len(episodic_batch) == config['batch_size']:
+            feature_volume_batch = np.zeros((config['batch_size'], config['input_points'], *config['output_dim']), dtype=np.float32) # TODO: can make it rolling
             pc_batch = []
             for b in range(config['batch_size']):
-                for n, (pc, successful_grasps) in enumerate(episodic_batch[b]):
-                    pc_batch.append(pc)
-                    for pose, ind in successful_grasps:
-                        (xyz,
-                         roll,
-                         pitch_index,
-                         pitch_residual,
-                         yaw_index,
-                         yaw_residual) = representation.grasp_representation(pose,
-                         pc,
-                         ind)
-                        representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
-            pc = torch.from_numpy(np.asarray(pc_batch, dtype=np.float32)).cuda()
+                pc, successful_grasps = episodic_batch[b]
+                pc_batch.append(pc)
+                for pose, ind in successful_grasps:
+                    if len(ind) == 0:
+                        continue
+                    (xyz,
+                     roll,
+                     pitch_index,
+                     pitch_residual,
+                     yaw_index,
+                     yaw_residual) = representation.grasp_representation(pose,
+                     pc,
+                     ind)
+                    representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
+            pc = torch.from_numpy(np.stack(pc_batch).astype(np.float32)).cuda()
             volume = torch.from_numpy(feature_volume_batch).cuda()
             optimizer.zero_grad()
             pred, ind, att, l21 = model(pc)
@@ -159,5 +191,11 @@ if __name__ == '__main__':
             loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
             loss.backward()
             optimizer.step()
+            torch.save({
+                    'base_model': base_model.state_dict(),
+                    'loss_state': loss_function.state_dict() if hasattr(loss_function, 'state_dict') else None,
+                    'optimizer_state': optimizer.state_dict(),
+                    'ite': ite,
+                    }, config['logdir'] + '/last.ckpt')
 
     logger.close()

@@ -52,7 +52,7 @@ class GraspDataset(Dataset):
         return len(self.ids)
     def __getitem__(self, item_idx):
         mode = "train" if self.training else "val"
-        id_ = self.ids[true_idx]
+        id_ = self.ids[item_idx]
         # Check if the pre-computed results exist
         config = self.config
         pc_scene = np.load(self.scene_path + '/' + id_, mmap_mode='c') # (#npt, 3)
@@ -65,8 +65,6 @@ class GraspDataset(Dataset):
         view_point = np.array([[0.0, 0.0, 2.0]], dtype=np.float32) # (1, 3)
 
         if self.use_aug:
-            pc_scene = np.append(pc_scene, pc_origin, axis=0)
-
             # Random translation
             translation = (np.random.randn(3) * 0.03).reshape(1, 3)
             pc_scene += translation
@@ -77,9 +75,6 @@ class GraspDataset(Dataset):
             rz = float(np.random.uniform(-np.pi, np.pi))
             random_rotation = rotation_euler(rx, ry, rz)
             pc_scene = np.matmul(pc_scene, random_rotation.T)
-
-            pc_origin = pc_scene[-1]
-            pc_scene = pc_scene[:-1]
 
             # Random viewpoint
             view_point[0,0] = np.random.uniform(-0.4, 0.4) # -+ 40cm
