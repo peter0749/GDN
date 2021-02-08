@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.distributed as dist
+from torch.autograd import Variable
 import etw_pytorch_utils as pt_utils
 from collections import namedtuple
 from pointnet2.utils import pointnet2_utils
@@ -29,6 +31,39 @@ class ImportanceSamplingModule(nn.Module):
         a = self.attention(f) # (B, M, 1)
         return a
 
+# modified for PyTorch from https://github.com/ericjang/gumbel-softmax/blob/master/Categorical%20VAE.ipynb
+def sample_gumbel(shape, dtype, device, eps=1e-20):
+    """Sample from Gumbel(0, 1)"""
+    U = torch.rand(*shape, dtype=dtype, device=device, requires_grad=False)
+    return -torch.log(-torch.log(U + eps) + eps)
+
+# modified for PyTorch from https://github.com/ericjang/gumbel-softmax/blob/master/Categorical%20VAE.ipynb
+def gumbel_softmax_sample(logits, temperature):
+    """ Draw a sample from the Gumbel-Softmax distribution"""
+    y = logits + sample_gumbel(logits.shape, logits.dtype, logits.device)
+    return F.softmax(y / temperature, dim=1)
+
+# modified for PyTorch from https://github.com/ericjang/gumbel-softmax/blob/master/Categorical%20VAE.ipynb
+def gumbel_softmax(logits, temperature=1.0, hard=False):
+    """Sample from the Gumbel-Softmax distribution and optionally discretize.
+    Args:
+      logits: [batch_size, n_class] unnormalized log-probs
+      temperature: non-negative scalar
+      hard: if True, take argmax, but differentiate w.r.t. soft sample y
+    Returns:
+      [batch_size, n_class] sample from the Gumbel-Softmax distribution.
+      If hard=True, then the returned sample will be one-hot, otherwise it will
+      be a probabilitiy distribution that sums to 1 across classes
+    """
+    y = gumbel_softmax_sample(logits, temperature)
+    if hard:
+        with torch.no_grad():
+            y_argmax = torch.argmax(y, -1, keepdim=True)
+            y_hard = torch.empty(*y.size(), dtype=y.dtype, device=y.device)
+            y_hard.zero_()
+            y_hard.scatter_(-1, y_argmax, 1)
+        y = (y_hard - y).detach() + y
+    return y
 
 class Pointnet2MSG(nn.Module):
     r"""
@@ -113,7 +148,7 @@ class Pointnet2MSG(nn.Module):
 
         return xyz, features
 
-    def sampling(self, pointcloud, std=1e-3):
+    def sampling(self, pointcloud, temperature=1.0):
         xyz, features = self._break_up_pc(pointcloud)
 
         l_xyz, l_features = [xyz], [features]
@@ -135,15 +170,19 @@ class Pointnet2MSG(nn.Module):
         att  = importance_topk.values  # (B, k)
         h_subsampled = pointnet2_utils.gather_operation(h, inds) # (B, 128, k)
 
-        # Add random noise sampled from normal dist
-        h_subsampled = h_subsampled + torch.randn(*h_subsampled.size(), dtype=h_subsampled.dtype, device=h_subsampled.device) * std
-
-        # h_att = att.unsqueeze(1) * h_subsampled # (B, 1, k) * (B, 128, k) -> (B, 128, k)
-        # x = self.FC_layer(h_att).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
         x = self.FC_layer(h_subsampled).transpose(1, 2).contiguous() # (B, k, n_pitch*n_yaw*8)
-        x = x.view(x.size(0), x.size(1), *self.output_dim)
+        x = x.view(x.size(0), x.size(1), *self.output_dim) # (B, k, n_pitch, n_yaw, 8)
+        refinement = self.activation_layer(x)[...,1:] # (B, k, n_pitch, n_yaw, 7)
 
-        return self.activation_layer(x), inds, importance
+        # sample rotations from gumbel_softmax
+        B, k = x.size(0), x.size(1)
+        action = x[...,0].reshape(B, k*self.config['n_pitch']*self.config['n_yaw']) # (B, k*n_pitch*n_yaw)
+        action = gumbel_softmax(action, temperature, hard=False).reshape(B, k, self.config['n_pitch'], self.config['n_yaw'], 1)
+
+        # merge the action and refinement
+        x = torch.cat((action, refinement), -1) # (B, k, n_pitch, n_yaw, 8)
+
+        return x, inds, importance
 
     def forward(self, pointcloud):
         # type: (Pointnet2MSG, torch.cuda.FloatTensor) -> pt_utils.Seq

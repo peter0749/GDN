@@ -79,7 +79,7 @@ if __name__ == '__main__':
     n_attempt = 0
     n_success = 0
     loss = 0.0
-    sampling_std = config['annealing_max']
+    temperature = config['annealing_max']
 
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
@@ -93,13 +93,13 @@ if __name__ == '__main__':
             n_attempt = states['n_attempt']
         if 'n_success' in states:
             n_success = states['n_success']
-        if 'sampling_std' in states:
-            sampling_std = states['sampling_std']
+        if 'temperature' in states:
+            temperature = states['temperature']
 
     model.train()
     dataset.train()
     batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
-    for ite in range(1, iterations+1):
+    for ite in range(start_ite, iterations+1):
         try:
             pc, pc_clean = next(batch_iterator)[:2]
         except StopIteration:
@@ -109,8 +109,8 @@ if __name__ == '__main__':
         pc_clean = pc_clean.numpy().astype(np.float32)
         with torch.no_grad():
             pc_cuda = torch.from_numpy(pc).cuda()
-            pred, ind, att = model.sampling(pc_cuda, std=sampling_std)
-            sampling_std = max(config['annealing_min'], sampling_std * config['annealing_t'])
+            pred, ind, att = model.sampling(pc_cuda, temperature=temperature)
+            temperature = max(config['annealing_min'], temperature * config['annealing_t'])
             pc_subsampled = pointnet2_utils.gather_operation(pc_cuda.transpose(1, 2).contiguous(), ind)
             pc_npy = pc_subsampled.cpu().transpose(1, 2).numpy().astype(np.float32)
             pred = pred.cpu().numpy().astype(np.float32)
@@ -123,11 +123,11 @@ if __name__ == '__main__':
                         config['thickness_side'],
                         config['rot_th'],
                         config['trans_th'],
-                        300, # max number of candidate
+                        100, # max number of candidate
                         -np.inf, # threshold of candidate
-                        300,  # max number of grasp in NMS
+                        100,  # max number of grasp in NMS
                         config['num_workers'],    # number of threads
-                        True  # use NMS
+                        False  # use NMS
             ), dtype=np.float32) # (?, 3, 4)
         for antipodal_angle in [15, 30, 45]:
             print("Testing with antipodal angle: %d"%antipodal_angle)
@@ -165,12 +165,12 @@ if __name__ == '__main__':
         n_attempt += len(pred_poses)
         if antipodal_angle < 31:
             n_success += len(sampled_grasps)
-        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f | std: %.4f | memory_bank: %d / %d (%d)"%(ite, n_attempt, n_success, antipodal_angle, loss, sampling_std, len(memory_bank), config['memory_bank_size'], config['batch_size']))
+        print("iteration: %d | #attempt: %d | #success: %d | antipodal_angle: %d | loss: %.2f | temperature: %.4f | memory_bank: %d / %d (%d)"%(ite, n_attempt, n_success, antipodal_angle, loss, temperature, len(memory_bank), config['memory_bank_size'], config['batch_size']))
         logger.add_scalar('n_attempt_vs_n_success_r', n_success / n_attempt, n_attempt)
         logger.add_scalar('n_attempt_vs_n_success', n_success, n_attempt)
         logger.add_scalar('n_iter_vs_n_success_r', n_success / ite, ite)
         logger.add_scalar('n_iter_vs_n_success', n_success, ite)
-        logger.add_scalar('sampling_std', sampling_std, ite)
+        logger.add_scalar('temperature', temperature, ite)
         if len(memory_bank) >= config['batch_size']:
             feature_volume_batch = np.zeros((config['batch_size'], config['input_points'], *config['output_dim']), dtype=np.float32) # TODO: can make it rolling
             pc_batch = []
@@ -209,7 +209,7 @@ if __name__ == '__main__':
                     'ite': ite,
                     'n_attempt': n_attempt,
                     'n_success': n_success,
-                    'sampling_std': sampling_std,
+                    'temperature': temperature,
                     }, config['logdir'] + '/last.ckpt')
 
     logger.close()
