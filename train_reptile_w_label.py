@@ -52,6 +52,7 @@ if __name__ == '__main__':
                             num_workers=config['num_workers_dataloader'],
                             pin_memory=False,
                             shuffle=True,
+                            drop_last=True,
                             collate_fn=my_collate_fn)
     config = dataset.get_config()
 
@@ -122,7 +123,7 @@ if __name__ == '__main__':
                     rot_loss_epoch += rot_loss
                     uncert_epoch += uncert.item()
                     write_hwstat(config['logdir'])
-            pbar.set_description('[%d/%d][%d/%d]: loss: %.2f reg: %.2f'%(e, epochs, n_iter, len(dataloader)*config['innerepochs'], loss_epoch/n_iter, l21_epoch/n_iter))
+            pbar.set_description('[%d/%d] iter: %d loss: %.2f reg: %.2f'%(e, epochs, n_iter, loss_epoch/n_iter, l21_epoch/n_iter))
             pbar.update(1)
             weights_after = base_model.state_dict()
             outerstepsize = config['outerstepsize0'] * (1.0 - (e-1.0) / epochs) # linear schedule
