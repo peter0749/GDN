@@ -1,3 +1,4 @@
+import open3d
 import os
 import sys
 import json

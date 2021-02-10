@@ -1,3 +1,4 @@
+import open3d
 import os
 import sys
 import json
@@ -42,8 +43,7 @@ if __name__ == '__main__':
     if not os.path.exists(config['logdir']+'/ckpt'):
         os.makedirs(config['logdir']+'/ckpt')
 
-    representation, dataset, my_collate_fn, base_model, _, optimizer, loss_function = import_model_by_setting(config)
-    model = base_model
+    representation, dataset, my_collate_fn, base_model, model, optimizer, loss_function = import_model_by_setting(config)
     device = next(base_model.parameters()).device
     dataset.train()
     my_collate_fn.train()
