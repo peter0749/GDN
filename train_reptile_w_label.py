@@ -183,39 +183,40 @@ if __name__ == '__main__':
                     if pc is None:
                         batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
                         pc, volume, gt_poses = next(batch_iterator)
-                    pc = pc.cuda()
-                    volume = volume.cuda()
-                    pred, ind, att, l21 = model(pc)
-                    (loss, foreground_loss, cls_loss,
-                        x_loss, y_loss, z_loss,
-                        rot_loss, ws, uncert) = loss_function(pred, ind, att, volume)
-                    n_iter += 1
-                    loss_epoch += loss.item()
-                    foreground_loss_epoch += foreground_loss
-                    cls_loss_epoch += cls_loss
-                    x_loss_epoch += x_loss
-                    y_loss_epoch += y_loss
-                    z_loss_epoch += z_loss
-                    rot_loss_epoch += rot_loss
-                    pc_subsampled = pointnet2_utils.gather_operation(pc.transpose(1, 2).contiguous(), ind)
-                    pc_subsampled = pc_subsampled.transpose(1, 2).cpu().numpy()
-                    pred_poses = representation.retrive_from_feature_volume_batch(
-                                pc_subsampled,
-                                pred.detach().cpu().numpy(),
-                                n_output=config['eval_pred_maxbox'],
-                                threshold=config['eval_pred_threshold'],
-                                nms=False
-                            )
-                    tp, fp, fn, sp, n_p, n_t, mAP = batch_metrics(pred_poses, gt_poses, **config)
-                    tpr += tp
-                    fpr += fp
-                    fnr += fn
-                    spr += sp
-                    tpr_2 += (tp + sp)
-                    mean_mAP += mAP
-                    n_pos += n_p
-                    n_gt  += n_t
-                    write_hwstat(config['logdir'])
+                    for start in range(0, config['task_size'], config['batch_size']):
+                        pc_cuda = pc[start:start+config['batch_size']].cuda()
+                        volume_cuda = volume[start:start+config['batch_size']].cuda()
+                        pred, ind, att, l21 = model(pc_cuda)
+                        (loss, foreground_loss, cls_loss,
+                            x_loss, y_loss, z_loss,
+                            rot_loss, ws, uncert) = loss_function(pred, ind, att, volume_cuda)
+                        n_iter += 1
+                        loss_epoch += loss.item()
+                        foreground_loss_epoch += foreground_loss
+                        cls_loss_epoch += cls_loss
+                        x_loss_epoch += x_loss
+                        y_loss_epoch += y_loss
+                        z_loss_epoch += z_loss
+                        rot_loss_epoch += rot_loss
+                        pc_subsampled = pointnet2_utils.gather_operation(pc_cuda.transpose(1, 2).contiguous(), ind)
+                        pc_subsampled = pc_subsampled.transpose(1, 2).cpu().numpy()
+                        pred_poses = representation.retrive_from_feature_volume_batch(
+                                    pc_subsampled,
+                                    pred.detach().cpu().numpy(),
+                                    n_output=config['eval_pred_maxbox'],
+                                    threshold=config['eval_pred_threshold'],
+                                    nms=False
+                                )
+                        tp, fp, fn, sp, n_p, n_t, mAP = batch_metrics(pred_poses, gt_poses, **config)
+                        tpr += tp
+                        fpr += fp
+                        fnr += fn
+                        spr += sp
+                        tpr_2 += (tp + sp)
+                        mean_mAP += mAP
+                        n_pos += n_p
+                        n_gt  += n_t
+                        write_hwstat(config['logdir'])
                 spr = spr / max(1, tpr_2)
                 tpr = tpr / max(1, n_pos)
                 tpr_2 = tpr_2 / max(1, n_pos)
