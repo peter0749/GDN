@@ -52,7 +52,6 @@ if __name__ == '__main__':
                             num_workers=config['num_workers_dataloader'],
                             pin_memory=False,
                             shuffle=True,
-                            drop_last=True,
                             collate_fn=my_collate_fn)
     config = dataset.get_config()
 
@@ -99,8 +98,8 @@ if __name__ == '__main__':
                 pc, volume, gt_poses = next(batch_iterator)
             weights_before = copy.deepcopy(base_model.state_dict())
             for _ in range(config['innerepochs']):
-                batch_inds = np.random.permutation(config['task_size'])
-                for start in range(0, config['task_size'], config['batch_size']):
+                batch_inds = np.random.permutation(len(pc))
+                for start in range(0, len(pc), config['batch_size']):
                     mbinds = batch_inds[start:start+config['batch_size']]
                     optimizer.zero_grad()
 
@@ -183,7 +182,7 @@ if __name__ == '__main__':
                     if pc is None:
                         batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
                         pc, volume, gt_poses = next(batch_iterator)
-                    for start in range(0, config['task_size'], config['batch_size']):
+                    for start in range(0, len(pc), config['batch_size']):
                         pc_cuda = pc[start:start+config['batch_size']].cuda()
                         volume_cuda = volume[start:start+config['batch_size']].cuda()
                         pred, ind, att, l21 = model(pc_cuda)
