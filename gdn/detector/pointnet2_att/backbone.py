@@ -166,7 +166,7 @@ class Pointnet2MSG(nn.Module):
         ht = h.transpose(1, 2).contiguous()
         importance = self.importance_sampling(ht)[...,0] # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
-        inds = importance_topk.indices.int() # (B, k)
+        inds = importance_topk.indices.int().clamp(0, importance.size(1)-1) # (B, k)
         att  = importance_topk.values  # (B, k)
         h_subsampled = pointnet2_utils.gather_operation(h, inds) # (B, 128, k)
 
@@ -213,7 +213,7 @@ class Pointnet2MSG(nn.Module):
         ht = h.transpose(1, 2).contiguous()
         importance = self.importance_sampling(ht)[...,0] # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
-        inds = importance_topk.indices.int() # (B, k)
+        inds = importance_topk.indices.int().clamp(0, importance.size(1)-1) # (B, k)
         att  = importance_topk.values  # (B, k)
         h_subsampled = pointnet2_utils.gather_operation(h, inds) # (B, 128, k)
 
@@ -224,7 +224,7 @@ class Pointnet2MSG(nn.Module):
 
         if self.return_sparsity:
             # xyz: (B, N, 3)
-            ind_sub = pointnet2_utils.furthest_point_sample(xyz, self.DPP_L_size)
+            ind_sub = pointnet2_utils.furthest_point_sample(xyz, self.DPP_L_size).clamp(0, xyz.size(1)-1)
             p_sub = pointnet2_utils.gather_operation(xyz.transpose(1,2).contiguous(), ind_sub) # (B, 3, k)
             a_sub = pointnet2_utils.gather_operation(importance.unsqueeze(1), ind_sub)[:,0,:].pow(0.5) # (B, k)
             a_argsort = torch.argsort(a_sub, dim=1, descending=True).int() # (B, k)

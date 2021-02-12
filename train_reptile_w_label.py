@@ -110,7 +110,7 @@ if __name__ == '__main__':
                         rot_loss, ws, uncert) = loss_function(pred, ind, att, volume[mbinds].cuda())
                     loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
                     loss.backward()
-                    nn.utils.clip_grad_norm_(base_model.parameters(), 2.0)
+                    nn.utils.clip_grad_norm_(base_model.parameters(), 5.0)
                     optimizer.step()
                     n_iter += 1
                     loss_epoch += loss.item()
@@ -125,7 +125,16 @@ if __name__ == '__main__':
                     write_hwstat(config['logdir'])
             weights_after = base_model.state_dict()
             outerstepsize = config['outerstepsize0'] * (1.0 - (e-1.0) / epochs) # linear schedule
-            base_model.load_state_dict({name : weights_before[name] + (weights_after[name] - weights_before[name]) * outerstepsize
+            new_state = {}
+            fails = False
+            for name in weights_before:
+                m = weights_after[name]
+                if not torch.all(torch.isfinite(m)):
+                    fails = True
+                    break
+                new_state[name] = m
+            if not fails:
+                base_model.load_state_dict({name : weights_before[name] + (new_state[name] - weights_before[name]) * outerstepsize
                                         for name in weights_before})
             pbar.set_description('[%d/%d] iter: %d loss: %.2f reg: %.2f outer_lr: %.4e'%(e, epochs, n_iter, loss_epoch/n_iter, l21_epoch/n_iter, outerstepsize))
             pbar.update(1)
