@@ -238,11 +238,10 @@ class Pointnet2MSG(nn.Module):
             phi_i = a_sub.unsqueeze(1).expand(S.size(0), S.size(1), S.size(2)) # (B, 1->k, k)
             phi_j = a_sub.unsqueeze(2).expand(S.size(0), S.size(1), S.size(2)) # (B, k, 1->k)
             L = phi_i * S * phi_j # (B, k, k)
+            L = torch.where(torch.isnan(L), torch.FloatTensor([1e-8]).to(L.device), L)
             e = torch.eye(L.size(1), device=L.device, dtype=L.dtype)
             detLI = torch.logdet(L + e.unsqueeze(0))
-            detLI = detLI[~torch.isnan(detLI)]
             detLY = torch.logdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
-            detLY = detLY[~torch.isnan(detLY)]
             logDDP = detLY - detLI
 
             return self.activation_layer(x), inds, importance, -logDDP.mean()
