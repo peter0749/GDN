@@ -38,7 +38,7 @@ def loss_baseline(y_pred, ind, importance, y_true, foreground_w, cls_w, x_w, y_w
     z_loss     = 0
     rot_loss   = 0
 
-    foreground_loss = F.binary_cross_entropy(importance.clamp(1e-8, 1-1e-8), y_true_importance)
+    foreground_loss = F.binary_cross_entropy(importance.clamp(1e-8, 1-1e-8), y_true_importance.clamp(1e-8, 1-1e-8))
     cls_loss        = focal_loss(accum_p, accum_gt.float(), **kwargs)
 
     if accum_gt.any():
