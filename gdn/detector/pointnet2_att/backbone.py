@@ -211,7 +211,7 @@ class Pointnet2MSG(nn.Module):
 
         h = l_features[0] # (B, 128, N)
         ht = h.transpose(1, 2).contiguous()
-        importance = self.importance_sampling(ht)[...,0].clamp(0, 1) # (B, N)
+        importance = self.importance_sampling(ht)[...,0].clamp(1e-8, 1-1e-8) # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
         inds = importance_topk.indices.int().clamp(0, importance.size(1)-1) # (B, k)
         att  = importance_topk.values  # (B, k)
