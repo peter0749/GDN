@@ -211,7 +211,7 @@ class Pointnet2MSG(nn.Module):
 
         h = l_features[0] # (B, 128, N)
         ht = h.transpose(1, 2).contiguous()
-        importance = self.importance_sampling(ht)[...,0] # (B, N)
+        importance = self.importance_sampling(ht)[...,0].clamp(0, 1) # (B, N)
         importance_topk = torch.topk(importance, self.topk, dim=1, sorted=True) # (B, k)
         inds = importance_topk.indices.int().clamp(0, importance.size(1)-1) # (B, k)
         att  = importance_topk.values  # (B, k)
@@ -238,15 +238,15 @@ class Pointnet2MSG(nn.Module):
             phi_i = a_sub.unsqueeze(1).expand(S.size(0), S.size(1), S.size(2)) # (B, 1->k, k)
             phi_j = a_sub.unsqueeze(2).expand(S.size(0), S.size(1), S.size(2)) # (B, k, 1->k)
             L = phi_i * S * phi_j # (B, k, k)
-            L = torch.where(torch.isfinite(L), L, torch.FloatTensor([1e-6]).to(L.device))
-            e = torch.eye(L.size(1), device=L.device, dtype=L.dtype)
-            detLI  = torch.slogdet(L + e.unsqueeze(0))
-            detLY  = torch.slogdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
-            logDDP = torch.where((detLY.sign>0) & torch.isfinite(detLY.logabsdet), detLY.logabsdet, torch.zeros(1, dtype=L.dtype, device=L.device)) - \
-                     torch.where((detLI.sign>0) & torch.isfinite(detLI.logabsdet), detLI.logabsdet, torch.zeros(1, dtype=L.dtype, device=L.device))
-
-            return self.activation_layer(x), inds, importance, -logDDP.mean()
-
+            if torch.all(torch.isfinite(L)):
+                L = torch.where(torch.isfinite(L), L, torch.FloatTensor([1e-6]).to(L.device))
+                e = torch.eye(L.size(1), device=L.device, dtype=L.dtype)
+                detLI  = torch.slogdet(L + e.unsqueeze(0))
+                detLY  = torch.slogdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
+                logDDP = torch.where((detLY.sign>0) & torch.isfinite(detLY.logabsdet), detLY.logabsdet, torch.zeros(1, dtype=L.dtype, device=L.device)) - \
+                         torch.where((detLI.sign>0) & torch.isfinite(detLI.logabsdet), detLI.logabsdet, torch.zeros(1, dtype=L.dtype, device=L.device))
+                return self.activation_layer(x), inds, importance, -logDDP.mean()
+            return self.activation_layer(x), inds, importance, torch.zeros(1, dtype=L.dtype, device=L.device)
         return self.activation_layer(x), inds, importance
 
 '''
