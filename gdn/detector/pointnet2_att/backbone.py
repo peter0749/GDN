@@ -240,7 +240,9 @@ class Pointnet2MSG(nn.Module):
             L = phi_i * S * phi_j # (B, k, k)
             e = torch.eye(L.size(1), device=L.device, dtype=L.dtype)
             detLI = torch.logdet(L + e.unsqueeze(0))
+            detLI = detLI[~torch.isnan(detLI)]
             detLY = torch.logdet(L[:,:self.DPP_Y_size, :self.DPP_Y_size])
+            detLY = detLY[~torch.isnan(detLY)]
             logDDP = detLY - detLI
 
             return self.activation_layer(x), inds, importance, -logDDP.mean()

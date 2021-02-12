@@ -110,7 +110,7 @@ if __name__ == '__main__':
                         rot_loss, ws, uncert) = loss_function(pred, ind, att, volume[mbinds].cuda())
                     loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
                     loss.backward()
-                    nn.utils.clip_grad_norm_(base_model.parameters(), 5.0)
+                    nn.utils.clip_grad_norm_(base_model.parameters(), 2.0)
                     optimizer.step()
                     n_iter += 1
                     loss_epoch += loss.item()
