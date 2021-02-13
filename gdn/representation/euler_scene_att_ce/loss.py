@@ -11,7 +11,7 @@ def focal_loss(pp, yy, focal_alpha=0.25, focal_gamma=2.0, **kwargs):
     p = pp.view(pp.size(0), -1)
     y = yy.view(yy.size(0), -1)
 
-    pt = (p*y + (1-p)*(1-y)).clamp(1e-8,1-1e-8)         # pt = p if y > 0 else 1-p
+    pt = (p*y + (1-p)*(1-y)).clamp(1e-4,1-1e-4)         # pt = p if y > 0 else 1-p
     w = focal_alpha*y + (1-focal_alpha)*(1-y)  # w = alpha if y > 0 else 1-alpha
     w = w * (1-pt)**focal_gamma
     loss = torch.sum(-w*pt.log(), 1) / torch.sum(y, 1).clamp(min=1.0) # In original paper, loss need to be normalized by the number of active anchors
@@ -38,7 +38,7 @@ def loss_baseline(y_pred, ind, importance, y_true, foreground_w, cls_w, x_w, y_w
     z_loss     = 0
     rot_loss   = 0
 
-    foreground_loss = F.binary_cross_entropy(importance.clamp(1e-8, 1-1e-8), y_true_importance.clamp(1e-8, 1-1e-8))
+    foreground_loss = F.binary_cross_entropy(importance, y_true_importance.clamp(1e-4, 1-1e-4))
     cls_loss        = focal_loss(accum_p, accum_gt.float(), **kwargs)
 
     if accum_gt.any():

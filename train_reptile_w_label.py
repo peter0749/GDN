@@ -14,6 +14,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = True
+#torch.backends.cudnn.benchmark = False
+torch.autograd.set_detect_anomaly(True)
 
 from pointnet2.utils import pointnet2_utils
 
@@ -101,17 +104,17 @@ if __name__ == '__main__':
                 batch_inds = np.random.permutation(len(pc))
                 for start in range(0, len(pc), config['batch_size']):
                     mbinds = batch_inds[start:start+config['batch_size']]
-                    optimizer.zero_grad()
-
-                    pred, ind, att, l21 = model(pc[mbinds].cuda())
-                    l21 = l21.mean()
-                    (loss, foreground_loss, cls_loss,
-                        x_loss, y_loss, z_loss,
-                        rot_loss, ws, uncert) = loss_function(pred, ind, att, volume[mbinds].cuda())
-                    loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(base_model.parameters(), 5.0)
-                    optimizer.step()
+                    with torch.autograd.detect_anomaly():
+                        optimizer.zero_grad()
+                        pred, ind, att, l21 = model(pc[mbinds].cuda())
+                        l21 = l21.mean()
+                        (loss, foreground_loss, cls_loss,
+                            x_loss, y_loss, z_loss,
+                            rot_loss, ws, uncert) = loss_function(pred, ind, att, volume[mbinds].cuda())
+                        loss += config['l21_reg_rate'] * l21 # l21 regularization (increase diversity)
+                        loss.backward()
+                        nn.utils.clip_grad_norm_(base_model.parameters(), 5.0)
+                        optimizer.step()
                     n_iter += 1
                     loss_epoch += loss.item()
                     foreground_loss_epoch += foreground_loss
@@ -125,16 +128,7 @@ if __name__ == '__main__':
                     write_hwstat(config['logdir'])
             weights_after = base_model.state_dict()
             outerstepsize = config['outerstepsize0'] * (1.0 - (e-1.0) / epochs) # linear schedule
-            new_state = {}
-            fails = False
-            for name in weights_before:
-                m = weights_after[name]
-                if not torch.all(torch.isfinite(m)):
-                    fails = True
-                    break
-                new_state[name] = m
-            if not fails:
-                base_model.load_state_dict({name : weights_before[name] + (new_state[name] - weights_before[name]) * outerstepsize
+            base_model.load_state_dict({name : weights_before[name] + (weights_after[name] - weights_before[name]) * outerstepsize
                                         for name in weights_before})
             pbar.set_description('[%d/%d] iter: %d loss: %.2f reg: %.2f outer_lr: %.4e'%(e, epochs, n_iter, loss_epoch/n_iter, l21_epoch/n_iter, outerstepsize))
             pbar.update(1)
