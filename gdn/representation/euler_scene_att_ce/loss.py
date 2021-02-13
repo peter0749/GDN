@@ -70,8 +70,8 @@ def loss_baseline(y_pred, ind, importance, y_true, foreground_w, cls_w, x_w, y_w
 
         zeros = torch.zeros(1, device=roll_gt.device).expand(roll_gt.size(0)) # prevent NaNs
 
-        roll_gt = torch.where(roll_gt[...,1]==0, zeros, torch.atan((1-roll_gt[...,0]) / roll_gt[...,1]))
-        roll_p  = torch.where(roll_p[...,1]==0, zeros, torch.atan((1-roll_p[...,0]) / roll_p[...,1]))
+        roll_gt = torch.where(torch.abs(roll_gt[...,1])<1e-4, zeros, torch.atan((1-roll_gt[...,0]) / roll_gt[...,1]))
+        roll_p  = torch.where(torch.abs(roll_p[...,1])<1e-4, zeros, torch.atan((1-roll_p[...,0]) / roll_p[...,1]))
 
         ### Construct Rotation Matrix ###
         rot_gt = rotation_tensor(roll_gt, pitch_gt, yaw_gt) # (B, 3, 3)
