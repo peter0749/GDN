@@ -68,10 +68,12 @@ def loss_baseline(y_pred, ind, importance, y_true, foreground_w, cls_w, x_w, y_w
         pitch_p = y_mask[2].float()*(pi/accum_gt.size(2))-pi/2.0 + pitch_residual_p*(pi/accum_gt.size(2))
         yaw_p   = y_mask[3].float()*(pi*2.0/accum_gt.size(3))-pi + yaw_residual_p*(pi*2.0/accum_gt.size(3))
 
-        zeros = torch.zeros(1, device=roll_gt.device) # prevent NaNs
+        eps_tensor = torch.full((1,), 1e-6, dtype=roll_gt.dtype, device=roll_gt.device)
+        roll_gt_denominator = torch.where(torch.abs(roll_gt[...,1])>1e-6, roll_gt[...,1], eps_tensor)
+        roll_p_denominator = torch.where(torch.abs(roll_p[...,1])>1e-6, roll_p[...,1], eps_tensor)
 
-        roll_gt = torch.where(torch.abs(roll_gt[...,1])>1e-4, torch.atan((1-roll_gt[...,0]) / roll_gt[...,1]), zeros)
-        roll_p  = torch.where(torch.abs(roll_p[...,1])>1e-4, torch.atan((1-roll_p[...,0]) / roll_p[...,1]), zeros)
+        roll_gt = torch.atan((1-roll_gt[...,0]) / roll_gt_denominator)
+        roll_p  = torch.atan((1-roll_p[...,0]) / roll_p_denominator)
 
         ### Construct Rotation Matrix ###
         rot_gt = rotation_tensor(roll_gt, pitch_gt, yaw_gt) # (B, 3, 3)
