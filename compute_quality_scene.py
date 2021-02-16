@@ -60,9 +60,17 @@ def eval_fn(pc_npy, pose, rot_th, config, verbose):
 def compute_match(ps, pc_id, predict_prefix='', pc_prefix='', rot_th=5.0, topK=10, vis_conf=False, vis_gamma=0.6, vis_proposal=False, use_vis=False):
     clip = topK * 2
     pc_npy = np.load(pc_prefix+'/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
+    z_min = pc_npy[...,2].min()
+    pc_npy = pc_npy[pc_npy[...,2]>z_min+0.005]
+    cloud = pcl.PointCloud(pc_npy)
+    sor = cloud.make_voxel_grid_filter()
+    sor.set_leaf_size(*([0.0015,]*3))
+    cloud_filtered = sor.filter()
+    pc_npy = np.asarray(cloud_filtered, dtype=np.float32)
+    del cloud, sor, cloud_filtered
     if use_vis:
         fig = mlab.figure(bgcolor=(0,0,0))
-        col = (pc_npy[:,2] - pc_npy[:,2].min()) /                 (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33
+        col = (pc_npy[:,2] - pc_npy[:,2].min()) / (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33
         mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], col, scale_factor=0.0015, scale_mode='none', mode='sphere', colormap='plasma', opacity=1.0, figure=fig)
     results = []
     pred_poses_npy = np.load(predict_prefix+'/'+pc_id+'.npy')[:clip]
@@ -133,7 +141,7 @@ if __name__ == '__main__':
     parser.add_argument("output", type=str, help="Output file in JSON format")
     parser.add_argument("--pc_path", type=str, required=True, help="Point cloud path for visualization")
     parser.add_argument("--top_K", type=int, default=10, help="Top-K for AP computation [10]")
-    parser.add_argument("--workers", type=int, default=2, help="")
+    parser.add_argument("--workers", type=int, default=1, help="")
     parser.add_argument("--specify", type=str, default="", help="")
     parser.add_argument("--visualize_confidence", action="store_true", help="Visualize confidence of grasps")
     parser.add_argument("--visualize_proposal", action="store_true", help="")

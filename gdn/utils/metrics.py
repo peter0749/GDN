@@ -14,7 +14,7 @@ def estimate_normals(pc, camera_location, radius=0.003, knn=30):
     n = np.asarray(pc_o3d.normals, dtype=np.float32)
     return n
 
-@nb.jit(nopython=True, nogil=True)
+@nb.jit(nopython=True, nogil=True, parallel=False)
 def force_closure(p1, p2, n1, n2, angle, use_abs_value=True):
     n1, n2 = -n1, -n2 # inward facing normals
 
