@@ -28,7 +28,8 @@ class GraspDataset(Dataset):
 
         self.scene_path = config['train_data']
         self.label_path = config['train_label']
-        self.tasks = list(sorted(os.listdir(self.train_label_path)))
+        self.max_task_size = config['max_task_size']
+        self.tasks = list(sorted(os.listdir(self.label_path)))
 
         self.use_aug = False
         self.training = False
@@ -49,12 +50,18 @@ class GraspDataset(Dataset):
         config = self.config
         obj_scene_prefix = self.scene_path + '/' + id_
         obj_label_prefix = self.label_path + '/' + id_
+        task_list = os.listdir(obj_label_prefix)
+        if len(task_list) > self.max_task_size:
+            task_list = np.random.choice(task_list, self.max_task_size, replace=False)
         Xs = []
         Ys = []
         Ms = []
-        for scene_id in os.listdir(obj_label_prefix):
+        for scene_id in task_list:
             pcd_path = obj_scene_prefix + '/' + scene_id
             label_path = obj_label_prefix + '/' + scene_id
+            if (not os.path.exists(pcd_path)) or (not os.path.exists(label_path)):
+                sys.stderr.write("Corrupted dataset!!!\n")
+                continue
             pc_scene = np.load(pcd_path)
             hand_poses = np.load(label_path) # (N, 3, 4)
 

@@ -52,7 +52,7 @@ if __name__ == '__main__':
     my_collate_fn.train()
     model.train()
     dataloader = DataLoader(dataset,
-                            batch_size=config['task_size'],
+                            batch_size=config['task_batch_size'],
                             num_workers=config['num_workers_dataloader'],
                             pin_memory=False,
                             shuffle=True,
@@ -93,10 +93,19 @@ if __name__ == '__main__':
             if pc is None:
                 batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
                 pc, volume, gt_poses = next(batch_iterator)
+            # Use batched reptile algorithm
+            # Save the initial weights phi
             weights_before = copy.deepcopy(base_model.state_dict())
-            for _ in range(config['innerepochs']):
-                task_inds = np.random.permutation(len(pc))
-                for task_i in task_inds:
+            # Initialize the meta gradient with zeros
+            reptile_gradient = {name : torch.zeros_like(weights_before[name])
+                                for name in weights_before}
+            reptile_gradient_n = 0.0
+            # Task sampling order (random)
+            task_inds = np.random.permutation(len(pc))
+            for task_i in task_inds:
+                # Sample a task_i
+                # Compute loss and update the weights (phi_tilde)
+                for _ in range(config['innerepochs']):
                     batch_inds = np.random.permutation(len(pc[task_i]))
                     for start in range(0, len(pc[task_i]), config['batch_size']):
                         mbinds = batch_inds[start:start+config['batch_size']]
@@ -122,10 +131,15 @@ if __name__ == '__main__':
                         rot_loss_epoch += rot_loss
                         uncert_epoch += uncert.item()
                         write_hwstat(config['logdir'])
-            weights_after = base_model.state_dict()
-            outerstepsize = config['outerstepsize0'] * (1.0 - (e-1.0) / epochs) # linear schedule
-            base_model.load_state_dict({name : weights_before[name] + (weights_after[name] - weights_before[name]) * outerstepsize
-                                        for name in weights_before})
+                # accumulate meta gradient
+                weights_after = base_model.state_dict() # phi_tilde
+                for name in weights_before:
+                    reptile_gradient[name] += (weights_after[name] - weights_before[name])
+                reptile_gradient_n += 1.0
+                # restore weights
+                base_model.load_state_dict(weights_before)
+            outerstepsize = np.clip(config['outerstepsize0'] * (config['outerstepsize_decay']**(e-1)), config['outerstepsize_min'], config['outerstepsize0'])
+            base_model.load_state_dict({name : weights_before[name] + (reptile_gradient[name] / reptile_gradient_n) * outerstepsize for name in weights_before})
             pbar.set_description('[%d/%d] iter: %d loss: %.2f reg: %.2f outer_lr: %.4e'%(e, epochs, n_iter, loss_epoch/n_iter, l21_epoch/n_iter, outerstepsize))
             pbar.update(1)
 
