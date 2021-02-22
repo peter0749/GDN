@@ -62,8 +62,8 @@ class GraspDataset(Dataset):
             if (not os.path.exists(pcd_path)) or (not os.path.exists(label_path)):
                 sys.stderr.write("Corrupted dataset!!!\n")
                 continue
-            pc_scene = np.load(pcd_path)
-            hand_poses = np.load(label_path) # (N, 3, 4)
+            pc_scene = np.load(pcd_path).astype(np.float32)
+            hand_poses = np.load(label_path).astype(np.float32) # (N, 3, 4)
 
             if len(pc_scene)>self.max_npts:
                 idx = np.random.choice(len(pc_scene), self.max_npts, replace=False)
