@@ -99,7 +99,6 @@ if __name__ == '__main__':
             # Initialize the meta gradient with zeros
             reptile_gradient = {name : torch.zeros_like(weights_before[name])
                                 for name in weights_before}
-            reptile_gradient_n = 0.0
             # Task sampling order (random)
             task_inds = np.random.permutation(len(pc))
             for task_i in task_inds:
@@ -135,11 +134,10 @@ if __name__ == '__main__':
                 weights_after = base_model.state_dict() # phi_tilde
                 for name in weights_before:
                     reptile_gradient[name] += (weights_after[name] - weights_before[name])
-                reptile_gradient_n += 1.0
                 # restore weights
                 base_model.load_state_dict(weights_before)
             outerstepsize = np.clip(config['outerstepsize0'] * (config['outerstepsize_decay']**(e-1)), config['outerstepsize_min'], config['outerstepsize0'])
-            base_model.load_state_dict({name : weights_before[name] + (reptile_gradient[name] / reptile_gradient_n) * outerstepsize for name in weights_before})
+            base_model.load_state_dict({name : weights_before[name] + (reptile_gradient[name] / float(config['innerepochs'])) * outerstepsize for name in weights_before})
             pbar.set_description('[%d/%d] iter: %d loss: %.2f reg: %.2f outer_lr: %.4e'%(e, epochs, n_iter, loss_epoch/n_iter, l21_epoch/n_iter, outerstepsize))
             pbar.update(1)
 
