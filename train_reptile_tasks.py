@@ -93,7 +93,7 @@ if __name__ == '__main__':
             if pc is None:
                 batch_iterator = iter(dataloader) # data_prefetcher(dataloader, device)
                 pc, volume, gt_poses = next(batch_iterator)
-            # Use batched reptile algorithm
+            # Use batched reptile algorithm (Alg. 2)
             # Save the initial weights phi
             weights_before = copy.deepcopy(base_model.state_dict())
             # Initialize the meta gradient with zeros

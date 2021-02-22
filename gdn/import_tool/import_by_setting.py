@@ -288,7 +288,10 @@ def import_model_by_setting(config, mode='train'):
     parallel_model = nn.DataParallel(base_model)
 
     if config['optimizer'] == 'adam':
-        optimizer = optim.Adam(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'])
+        if 'beta1' in config and 'beta2' in config:
+            optimizer = optim.Adam(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'], betas=(config['beta1'], config['beta2']))
+        else:
+            optimizer = optim.Adam(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'])
     elif config['optimizer'] == 'sgd':
         optimizer = optim.SGD(chain(parallel_model.parameters(), loss.parameters()), lr=config['learning_rate'], momentum=config['momentum'])
     else:
