@@ -62,8 +62,8 @@ class GraspDataset(Dataset):
             if (not os.path.exists(pcd_path)) or (not os.path.exists(label_path)):
                 sys.stderr.write("Corrupted dataset!!!\n")
                 continue
-            pc_scene = np.load(pcd_path)
-            hand_poses = np.load(label_path) # (N, 3, 4)
+            pc_scene = np.load(pcd_path).astype(np.float32)
+            hand_poses = np.load(label_path).astype(np.float32) # (N, 3, 4)
 
             if len(pc_scene)>self.max_npts:
                 idx = np.random.choice(len(pc_scene), self.max_npts, replace=False)
@@ -201,6 +201,10 @@ class collate_fn_setup(object):
                                        config['n_yaw'],
                                        8), dtype=np.float32)
             for b in range(pc_batch.shape[0]):
+                if pose_batch[b] is None or len(pose_batch[b]) == 0:
+                    continue
+                if enclosed_pt_batch[b] is None or len(enclosed_pt_batch[b]) == 0:
+                    continue
                 for n, (pose, ind) in enumerate(zip(pose_batch[b], enclosed_pt_batch[b])):
                     if len(ind)==0:
                         continue

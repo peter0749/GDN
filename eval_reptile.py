@@ -1,5 +1,8 @@
 # coding: utf-8
 
+#from mayavi import mlab
+#mlab.options.offscreen = True
+
 import os
 import sys
 import json
@@ -40,6 +43,7 @@ def parse_args():
     parser.add_argument("nepoch", type=int, help="")
     parser.add_argument("batch_size", type=int, help="")
     parser.add_argument("output_dir", type=str, help="Path to the results")
+    parser.add_argument("--naug", type=int, default=0, help="")
     args = parser.parse_args()
     return args
 
@@ -55,6 +59,7 @@ if __name__ == '__main__':
         config = json.load(fp)
         config['val_data'] = args.task_data
         config['val_label'] = args.task_label
+        #config['input_points'] = 20000 # TODO: DELETE ME
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -80,32 +85,96 @@ if __name__ == '__main__':
     # Prepare batches
     if args.ntrain > 0:
         print("Preparing training batches...")
-        Xs = [] # point clouds
-        Ys = np.zeros((args.ntrain,
-                       config['input_points'],
-                       *config['output_dim']),
-                      dtype=np.float32) # grasp volumes
-        for b in tqdm(range(args.ntrain)):
-            batch = next(batch_iterator)
-            pc, hand_poses, pc_origin, scene_ids = batch
-            pc_npy = pc[0].numpy().astype(np.float32)
-            Xs.append(pc)
-            for pose in reversed(hand_poses[0]): # overwrite lower antipodal grasps
-                gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
-                enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
-                if len(enclosed_pts)==0:
-                    continue
-                (xyz,
-                 roll,
-                 pitch_index,
-                 pitch_residual,
-                 yaw_index,
-                 yaw_residual) = representation.grasp_representation(pose,
-                 pc_npy, # shape: (N, 3)
-                 enclosed_pts)
-                representation.update_feature_volume(Ys[b], enclosed_pts, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
-        Xs = torch.cat(Xs).float()
-        Ys = torch.from_numpy(Ys).float()
+        if args.naug <= 0:
+            Xs = [] # point clouds
+            Ys = np.zeros((args.ntrain,
+                           config['input_points'],
+                           *config['output_dim']),
+                          dtype=np.float32) # grasp volumes
+            for b in tqdm(range(args.ntrain)):
+                batch = next(batch_iterator)
+                pc, hand_poses = batch[:2]
+                pc_npy = pc[0].numpy().astype(np.float32)
+                Xs.append(pc)
+                for pose in reversed(hand_poses[0]): # overwrite lower antipodal grasps
+                    gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
+                    enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
+                    if len(enclosed_pts)==0:
+                        continue
+                    (xyz,
+                     roll,
+                     pitch_index,
+                     pitch_residual,
+                     yaw_index,
+                     yaw_residual) = representation.grasp_representation(pose,
+                     pc_npy, # shape: (N, 3)
+                     enclosed_pts)
+                    representation.update_feature_volume(Ys[b], enclosed_pts, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
+            Xs = torch.cat(Xs).float()
+            Ys = torch.from_numpy(Ys).float()
+        else:
+            Xs = [] # point clouds
+            Ys = np.zeros((args.ntrain * args.naug,
+                           config['input_points'],
+                           *config['output_dim']),
+                          dtype=np.float32) # grasp volumes
+            for b in tqdm(range(args.ntrain)):
+                batch_original = next(batch_iterator)
+                for n, rz in enumerate(np.linspace(0, 2.0*np.pi, args.naug+1)[:-1]):
+                    pc, hand_poses = copy.deepcopy(batch_original)[:2]
+                    pc_npy = pc[0].numpy().astype(np.float32) # (N, 3)
+                    hand_poses = np.asarray(hand_poses[0], dtype=np.float32) # (M, 3, 4)
+
+                    if n > 0:
+                        # Apply rotation
+                        Rz = np.array([[np.cos(rz), -np.sin(rz), 0],
+                                       [np.sin(rz), np.cos(rz), 0],
+                                       [0, 0, 1]], dtype=np.float32)
+                        RzT = Rz.T
+                        pc_npy = np.ascontiguousarray(pc_npy@RzT) #(Rz@pc_npy.T).T
+                        t = hand_poses[:,:3,3]@RzT #(Rz@hand_poses[:,:3,3].T).T # (M, 3)
+                        vx = hand_poses[:,:3,0]@RzT #(Rz@hand_poses[:,:3,0].T).T # (M, 3)
+                        vy = hand_poses[:,:3,1]@RzT #(Rz@hand_poses[:,:3,1].T).T # (M, 3)
+                        vz = hand_poses[:,:3,2]@RzT #(Rz@hand_poses[:,:3,2].T).T # (M, 3)
+                        hand_poses = np.ascontiguousarray(np.transpose(np.stack((vx, vy, vz, t)), (1, 2, 0))) # (4, M, 3) -> (M, 3, 4)
+
+                    '''
+                    fig = mlab.figure(bgcolor=(0,0,0))
+                    col = (pc_npy[:,2] - pc_npy[:,2].min()) / (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33
+                    mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], col, scale_factor=0.0015, scale_mode='none', mode='sphere', colormap='plasma', opacity=1.0, figure=fig)
+                    '''
+
+                    Xs.append(pc)
+                    #for pose in reversed(hand_poses[:10]): # overwrite lower antipodal grasps
+                    for pose in reversed(hand_poses): # overwrite lower antipodal grasps
+                        gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
+                        '''
+                        gripper_l, gripper_r, gripper_l_t, gripper_r_t = gripper_inner_edge
+                        center_bottom = (gripper_l+gripper_r) / 2.0
+                        approach = gripper_l_t-gripper_l
+                        approach = approach / np.linalg.norm(approach) # norm must > 0
+                        wrist_center = center_bottom - approach * 0.05
+                        mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
+                        mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
+                        mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
+                        mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
+                        '''
+                        enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
+                        if len(enclosed_pts)==0:
+                            continue
+                        (xyz,
+                         roll,
+                         pitch_index,
+                         pitch_residual,
+                         yaw_index,
+                         yaw_residual) = representation.grasp_representation(pose,
+                         pc_npy, # shape: (N, 3)
+                         enclosed_pts)
+                        representation.update_feature_volume(Ys[b*args.naug+n], enclosed_pts, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
+                    #mlab.savefig('example-%d.png'%n, figure=fig)
+                    #mlab.clf()
+            Xs = torch.cat(Xs).float()
+            Ys = torch.from_numpy(Ys).float()
 
         # Start fine-tune
         print("Fine-tuning...")
