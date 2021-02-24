@@ -49,7 +49,7 @@ def apply_grad(model, grad):
     return grad_norm.item()
 
 @torch.enable_grad()
-def hv_prod(in_grad, x, params, lamb=100.0):
+def hv_prod(in_grad, x, params, lamb=10.0):
    hv = torch.autograd.grad(in_grad, params, retain_graph=True, grad_outputs=x)
    hv = torch.nn.utils.parameters_to_vector(hv).detach()
    # precondition with identity matrix
@@ -174,6 +174,7 @@ if __name__ == '__main__':
                 meta_train_ind = batch_inds[len_meta_test:len_meta_set]
                 assert len(meta_train_ind) > 0
                 assert len(meta_test_ind) > 0
+                model_with_loss.zero_grad()
                 grad_list = []
                 with higher.innerloop_ctx(model_with_loss, inner_optimizer, track_higher_grads=False) as (fmodel, diffopt):
                     for t in range(config['innerepochs']+1):
@@ -193,7 +194,7 @@ if __name__ == '__main__':
                     params = list(fmodel.parameters(time=-1))
                     in_grad = torch.nn.utils.parameters_to_vector(torch.autograd.grad(in_loss, params, create_graph=True))
                     outer_grad = torch.nn.utils.parameters_to_vector(torch.autograd.grad(outer_loss, params))
-                    implicit_grad = cg(in_grad, outer_grad, params, vec_to_grad, n_cg=10)
+                    implicit_grad = cg(in_grad, outer_grad, params, vec_to_grad, n_cg=2)
                     grad_list.append(implicit_grad)
 
                 outer_optimizer.zero_grad()
