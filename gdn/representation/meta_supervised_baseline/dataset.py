@@ -180,6 +180,8 @@ class collate_fn_setup(object):
                                        config['n_yaw'],
                                        8), dtype=np.float32)
         for b in range(pc_batch.shape[0]):
+            if len(pose_batch[b]) == 0 or len(enclosed_pt_batch[b]) == 0:
+                continue
             for n, (pose, ind) in enumerate(zip(pose_batch[b], enclosed_pt_batch[b])):
                 if len(ind)==0:
                     continue
