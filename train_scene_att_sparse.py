@@ -95,6 +95,8 @@ if __name__ == '__main__':
     json.dump(config, open(config['logdir']+'/settings.json', "w"))
 
     best_tpr2 = -1.0
+    tpr_2 = -1.0
+    mean_mAP = -1.0
 
     if 'pretrain_path' in config and os.path.exists(config['pretrain_path']):
         states = torch.load(config['pretrain_path'])
