@@ -84,6 +84,21 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.meta_supervised_baseline import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
+    elif config['representation'] == 'meta_supervised_oracle':
+        from ..representation.meta_supervised_oracle import EulerRepresentation, MultiTaskLossWrapper
+        from ..representation.meta_supervised_oracle.activation import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.meta_supervised_oracle import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.meta_supervised_oracle import GraspDatasetVal, collate_fn_setup_val
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 'euler_scene_att_ce_maml':
         from ..representation.euler_scene_att_ce_maml import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_att_ce_maml.activation import EulerActivation as ActivationLayer
