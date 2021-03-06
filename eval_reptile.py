@@ -123,28 +123,31 @@ if __name__ == '__main__':
             batch = next(batch_iterator)
             pc, hand_poses = batch[:2]
             poses = hand_poses[0]
-            kmeans = KMeans(n_clusters=n_clusters, max_iter=100, n_init=3, verbose=False)
-            kmeans.fit(poses[...,3])
-            selected_grasps = []
-            for l in range(n_clusters):
-                poses_l = poses[kmeans.labels_==l]
-                if len(poses_l) > k_dpp:
-                    A = makeAffinityMatrix(poses_l)
-                    DPP = FiniteDPP('likelihood', **{'L': A})
-                    best_samples = []
-                    best_scores = np.inf
-                    for _ in range(mcmc_trials):
-                        samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
-                        sim = 0.0
-                        for i in range(k_dpp):
-                            for j in range(i+1, k_dpp):
-                                sim += A[samples[i],samples[j]]
-                        if sim < best_scores:
-                            best_scores = sim
-                            best_samples = samples
-                    selected_grasps += [ poses_l[i] for i in best_samples ]
-                else:
-                    selected_grasps += list(poses_l)
+            if len(poses) > n_clusters:
+                kmeans = KMeans(n_clusters=n_clusters, max_iter=100, n_init=3, verbose=False)
+                kmeans.fit(poses[...,3])
+                selected_grasps = []
+                for l in range(n_clusters):
+                    poses_l = poses[kmeans.labels_==l]
+                    if len(poses_l) > k_dpp:
+                        A = makeAffinityMatrix(poses_l)
+                        DPP = FiniteDPP('likelihood', **{'L': A})
+                        best_samples = []
+                        best_scores = np.inf
+                        for _ in range(mcmc_trials):
+                            samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
+                            sim = 0.0
+                            for i in range(k_dpp):
+                                for j in range(i+1, k_dpp):
+                                    sim += A[samples[i],samples[j]]
+                            if sim < best_scores:
+                                best_scores = sim
+                                best_samples = samples
+                        selected_grasps += [ poses_l[i] for i in best_samples ]
+                    else:
+                        selected_grasps += list(poses_l)
+            else:
+                selected_grasps = poses
             selected_grasps = np.asarray(selected_grasps, dtype=np.float32)
             if len(selected_grasps) > args.ngrasp:
                 selected_grasps = selected_grasps[ np.random.choice(len(selected_grasps), args.ngrasp, replace=False)  ]
