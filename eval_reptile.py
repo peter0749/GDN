@@ -43,7 +43,8 @@ def parse_args():
     parser.add_argument("nepoch", type=int, help="")
     parser.add_argument("batch_size", type=int, help="")
     parser.add_argument("output_dir", type=str, help="Path to the results")
-    parser.add_argument("--ngrasp", type=int, default=5, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--nrot", type=int, default=3, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--npos", type=int, default=5, help="Simulate number of annotation labeled by humans.")
     args = parser.parse_args()
     return args
 
@@ -60,6 +61,11 @@ if __name__ == '__main__':
         config['val_data'] = args.task_data
         config['val_label'] = args.task_label
         #config['input_points'] = 20000 # TODO: DELETE ME
+
+    k_dpp = args.nrot
+    n_clusters = args.npos
+    mcmc_trials = 5
+    mcmc_iters = 300
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -93,13 +99,30 @@ if __name__ == '__main__':
         for b in tqdm(range(args.ntrain)):
             batch = next(batch_iterator)
             pc, hand_poses = batch[:2]
+            poses = hand_poses[0]
+            kmeans = KMeans(n_clusters=n_clusters, max_iter=100, n_init=3, verbose=False)
+            kmeans.fit(poses[...,3])
+            selected_grasps = []
+            for l in range(n_clusters):
+                poses_l = poses[kmeans.labels_==l]
+                A = makeAffinityMatrix(poses_l)
+                DPP = FiniteDPP('likelihood', **{'L': A})
+                best_samples = []
+                best_scores = np.inf
+                for _ in range(mcmc_trials):
+                    samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
+                    sim = 0.0
+                    for i in range(k_dpp):
+                        for j in range(i+1, k_dpp):
+                            sim += A[samples[i],samples[j]]
+                    if sim < best_scores:
+                        best_scores = sim
+                        best_samples = samples
+                selected_grasps += [ poses_l[i] for i in best_samples ]
+            selected_grasps = np.asarray(selected_grasps, dtype=np.float32)
             pc_npy = pc[0].numpy().astype(np.float32)
             Xs.append(pc)
-            num_annotated = 0
-            for pose_ind in np.random.permutation(len(hand_poses[0])):
-                if num_annotated >= args.ngrasp:
-                    break
-                pose = hand_poses[0][pose_ind]
+            for pose in selected_grasps:
                 gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
                 enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
                 if len(enclosed_pts)==0:
@@ -113,7 +136,6 @@ if __name__ == '__main__':
                  pc_npy, # shape: (N, 3)
                  enclosed_pts)
                 representation.update_feature_volume(Ys[b], enclosed_pts, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
-                num_annotated += 1
         Xs = torch.cat(Xs).float()
         Ys = torch.from_numpy(Ys).float()
 
