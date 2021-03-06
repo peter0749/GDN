@@ -60,6 +60,7 @@ def parse_args():
     parser.add_argument("ntrain", type=int, help="")
     parser.add_argument("--nrot", type=int, default=3, help="Simulate number of annotation labeled by humans.")
     parser.add_argument("--npos", type=int, default=5, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--ngrasp", type=int, default=5, help="Simulate number of annotation labeled by humans.")
     args = parser.parse_args()
     return args
 
@@ -103,24 +104,30 @@ if __name__ == '__main__':
             poses = hand_poses[0]
             kmeans = KMeans(n_clusters=n_clusters, max_iter=100, n_init=3, verbose=False)
             kmeans.fit(poses[...,3])
+
             selected_grasps = []
             for l in range(n_clusters):
                 poses_l = poses[kmeans.labels_==l]
-                A = makeAffinityMatrix(poses_l)
-                DPP = FiniteDPP('likelihood', **{'L': A})
-                best_samples = []
-                best_scores = np.inf
-                for _ in range(mcmc_trials):
-                    samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
-                    sim = 0.0
-                    for i in range(k_dpp):
-                        for j in range(i+1, k_dpp):
-                            sim += A[samples[i],samples[j]]
-                    if sim < best_scores:
-                        best_scores = sim
-                        best_samples = samples
-                selected_grasps += [ poses_l[i] for i in best_samples ]
+                if len(poses_l) > k_dpp:
+                    A = makeAffinityMatrix(poses_l)
+                    DPP = FiniteDPP('likelihood', **{'L': A})
+                    best_samples = []
+                    best_scores = np.inf
+                    for _ in range(mcmc_trials):
+                        samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
+                        sim = 0.0
+                        for i in range(k_dpp):
+                            for j in range(i+1, k_dpp):
+                                sim += A[samples[i],samples[j]]
+                        if sim < best_scores:
+                            best_scores = sim
+                            best_samples = samples
+                    selected_grasps += [ poses_l[i] for i in best_samples ]
+                else:
+                    selected_grasps += list(poses_l)
             selected_grasps = np.asarray(selected_grasps, dtype=np.float32)
+            if len(selected_grasps) > args.ngrasp:
+                selected_grasps = selected_grasps[ np.random.choice(len(selected_grasps), args.ngrasp, replace=False)  ]
 
             fig = mlab.figure(bgcolor=(0,0,0), size=(1024, 1024))
             col = (pc_npy[:,2] - pc_npy[:,2].min()) / (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33
@@ -138,17 +145,3 @@ if __name__ == '__main__':
                 mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
             mlab.savefig('shot-%d.png'%b, figure=fig)
             mlab.clf()
-
-
-            '''
-            num_annotated = 0
-            for pose_ind in np.random.permutation(len(hand_poses[0])):
-                if num_annotated >= args.ngrasp:
-                    break
-                pose = hand_poses[0][pose_ind]
-                gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
-                enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
-                if len(enclosed_pts)==0:
-                    continue
-                num_annotated += 1
-            '''

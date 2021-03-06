@@ -1,5 +1,7 @@
 # coding: utf-8
 
+import open3d
+
 #from mayavi import mlab
 #mlab.options.offscreen = True
 
@@ -21,6 +23,8 @@ from torch.utils.data import Dataset, DataLoader
 torch.backends.cudnn.benchmark = True
 
 from pointnet2.utils import pointnet2_utils
+from sklearn.cluster import KMeans
+from dppy.finite_dpps import FiniteDPP
 
 from nms import decode_euler_feature
 from nms import initEigen, sanity_check
@@ -33,6 +37,24 @@ import importlib
 import copy
 from argparse import ArgumentParser
 
+@nb.njit
+def rotDist(x, y):
+    return np.arcsin(np.linalg.norm(np.eye(3) - np.dot(x[:3,:3], y[:3,:3].T), ord=None ) / (2*np.sqrt(2)))
+
+@nb.njit
+def makeAffinityMatrix(poses, sigma_r=0.5, sigma_t=0.25):
+    A = np.eye(len(poses), dtype=np.float32)
+    for i in range(len(poses)):
+        for j in range(i+1, len(poses)):
+            d = rotDist(poses[i,:3,:3], poses[j,:3,:3])
+            s_r = np.exp(-d / ((2. * sigma_r) ** 2))
+            if not np.isfinite(s_r):
+                s_r = 0.0
+            d = np.linalg.norm(poses[i,:3,3]-poses[j,:3,3], ord=2)
+            s_t = np.exp(-d / ((2. * sigma_t) ** 2))
+            A[i,j] = A[j,i] = max(s_r * s_t, 1e-8)
+    return A
+
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("config", type=str, help="Path to configuration file (in JSON)")
@@ -43,8 +65,9 @@ def parse_args():
     parser.add_argument("nepoch", type=int, help="")
     parser.add_argument("batch_size", type=int, help="")
     parser.add_argument("output_dir", type=str, help="Path to the results")
-    parser.add_argument("--nrot", type=int, default=3, help="Simulate number of annotation labeled by humans.")
-    parser.add_argument("--npos", type=int, default=5, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--nrot", type=int, default=5, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--npos", type=int, default=7, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--ngrasp", type=int, default=10, help="Simulate number of annotation labeled by humans.")
     args = parser.parse_args()
     return args
 
@@ -105,21 +128,26 @@ if __name__ == '__main__':
             selected_grasps = []
             for l in range(n_clusters):
                 poses_l = poses[kmeans.labels_==l]
-                A = makeAffinityMatrix(poses_l)
-                DPP = FiniteDPP('likelihood', **{'L': A})
-                best_samples = []
-                best_scores = np.inf
-                for _ in range(mcmc_trials):
-                    samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
-                    sim = 0.0
-                    for i in range(k_dpp):
-                        for j in range(i+1, k_dpp):
-                            sim += A[samples[i],samples[j]]
-                    if sim < best_scores:
-                        best_scores = sim
-                        best_samples = samples
-                selected_grasps += [ poses_l[i] for i in best_samples ]
+                if len(poses_l) > k_dpp:
+                    A = makeAffinityMatrix(poses_l)
+                    DPP = FiniteDPP('likelihood', **{'L': A})
+                    best_samples = []
+                    best_scores = np.inf
+                    for _ in range(mcmc_trials):
+                        samples = DPP.sample_mcmc_k_dpp(size=k_dpp, nb_iter=mcmc_iters)
+                        sim = 0.0
+                        for i in range(k_dpp):
+                            for j in range(i+1, k_dpp):
+                                sim += A[samples[i],samples[j]]
+                        if sim < best_scores:
+                            best_scores = sim
+                            best_samples = samples
+                    selected_grasps += [ poses_l[i] for i in best_samples ]
+                else:
+                    selected_grasps += list(poses_l)
             selected_grasps = np.asarray(selected_grasps, dtype=np.float32)
+            if len(selected_grasps) > args.ngrasp:
+                selected_grasps = selected_grasps[ np.random.choice(len(selected_grasps), args.ngrasp, replace=False)  ]
             pc_npy = pc[0].numpy().astype(np.float32)
             Xs.append(pc)
             for pose in selected_grasps:
