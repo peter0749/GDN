@@ -2,6 +2,7 @@
 
 from mayavi import mlab
 mlab.options.offscreen = True
+import matplotlib.pyplot as plt
 
 import os
 import sys
@@ -122,26 +123,27 @@ if __name__ == '__main__':
                         if sim < best_scores:
                             best_scores = sim
                             best_samples = samples
-                    selected_grasps += [ poses_l[i] for i in best_samples ]
+                    selected_grasps += [ (l,poses_l[i]) for i in best_samples ]
                 else:
-                    selected_grasps += list(poses_l)
-            selected_grasps = np.asarray(selected_grasps, dtype=np.float32)
+                    selected_grasps += [ (l,pose) for pose in poses_l ]
             if len(selected_grasps) > args.ngrasp:
-                selected_grasps = selected_grasps[ np.random.choice(len(selected_grasps), args.ngrasp, replace=False)  ]
+                np.random.shuffle(selected_grasps)
+                selected_grasps = selected_grasps[:args.ngrasp]
 
             fig = mlab.figure(bgcolor=(0,0,0), size=(1024, 1024))
             col = (pc_npy[:,2] - pc_npy[:,2].min()) / (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33
             mlab.points3d(pc_npy[:,0], pc_npy[:,1], pc_npy[:,2], col, scale_factor=0.0015, scale_mode='none', mode='sphere', colormap='plasma', opacity=1.0, figure=fig)
-            for pose in selected_grasps:
+            for cluster_ind, pose in selected_grasps:
                 gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
                 gripper_l, gripper_r, gripper_l_t, gripper_r_t = gripper_inner_edge
                 center_bottom = (gripper_l+gripper_r) / 2.0
                 approach = gripper_l_t-gripper_l
                 approach = approach / np.linalg.norm(approach) # norm must > 0
                 wrist_center = center_bottom - approach * 0.05
-                mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
-                mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
-                mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
-                mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=0.003, color=(0, 1, 0), opacity=0.8, figure=fig)
+                color = plt.get_cmap('tab20')(cluster_ind)[:3] # RGB
+                mlab.plot3d([gripper_l[0], gripper_r[0]], [gripper_l[1], gripper_r[1]], [gripper_l[2], gripper_r[2]], tube_radius=0.003, color=color, opacity=1.0, figure=fig)
+                mlab.plot3d([gripper_l[0], gripper_l_t[0]], [gripper_l[1], gripper_l_t[1]], [gripper_l[2], gripper_l_t[2]], tube_radius=0.003, color=color, opacity=1.0, figure=fig)
+                mlab.plot3d([gripper_r[0], gripper_r_t[0]], [gripper_r[1], gripper_r_t[1]], [gripper_r[2], gripper_r_t[2]], tube_radius=0.003, color=color, opacity=1.0, figure=fig)
+                mlab.plot3d([center_bottom[0], wrist_center[0]], [center_bottom[1], wrist_center[1]], [center_bottom[2], wrist_center[2]], tube_radius=0.003, color=color, opacity=1.0, figure=fig)
             mlab.savefig('shot-%d.png'%b, figure=fig)
             mlab.clf()
