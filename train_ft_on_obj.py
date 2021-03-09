@@ -76,7 +76,7 @@ if __name__ == '__main__':
         config["train_label"] += '/' + args.obj
         config["val_data"] = config["train_data"]
         config["val_label"] = config["train_label"]
-        config["logdir"] += '_' + args.obj
+        config["logdir"] += '/' + args.obj
 
     if not os.path.exists(config['logdir']+'/ckpt'):
         os.makedirs(config['logdir']+'/ckpt')
