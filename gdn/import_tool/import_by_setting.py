@@ -99,6 +99,36 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.meta_supervised_oracle import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
+    elif config['representation'] == 's4g_focal_scene':
+        from ..representation.s4g_focal_scene import S4GRepresentation, MultiTaskLossWrapper
+        from ..representation.s4g_focal_scene.activation import S4GActivation as ActivationLayer
+        representation = S4GRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.s4g_focal_scene import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.s4g_focal_scene import GraspDatasetVal, collate_fn_setup_val
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = collate_fn_setup_val(config)
+    elif config['representation'] == 's4g_focal_maml':
+        from ..representation.s4g_focal_maml import S4GRepresentation, MultiTaskLossWrapper
+        from ..representation.s4g_focal_maml.activation import S4GActivation as ActivationLayer
+        representation = S4GRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        if not ('tune_task_weights' in config and config['tune_task_weights']):
+            freeze_model(loss)
+        if mode == 'train':
+            from ..representation.s4g_focal_maml import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.s4g_focal_maml import GraspDatasetVal, collate_fn_setup_val
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 'euler_scene_att_ce_maml':
         from ..representation.euler_scene_att_ce_maml import EulerRepresentation, MultiTaskLossWrapper
         from ..representation.euler_scene_att_ce_maml.activation import EulerActivation as ActivationLayer
