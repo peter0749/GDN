@@ -100,7 +100,11 @@ def import_model_by_setting(config, mode='train'):
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 's4g_focal_scene':
-        from ..representation.s4g_focal_scene import S4GRepresentation, MultiTaskLossWrapper
+        if 'pu_loss' in config and config['pu_loss']:
+            from ..representation.s4g_focal_scene.pu_loss import MultiTaskLossWrapper
+        else:
+            from ..representation.s4g_focal_scene.loss import MultiTaskLossWrapper
+        from ..representation.s4g_focal_scene.representation import S4GRepresentation
         from ..representation.s4g_focal_scene.activation import S4GActivation as ActivationLayer
         representation = S4GRepresentation(config)
         loss = MultiTaskLossWrapper(config).cuda()
@@ -115,7 +119,11 @@ def import_model_by_setting(config, mode='train'):
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 's4g_focal_maml':
-        from ..representation.s4g_focal_maml import S4GRepresentation, MultiTaskLossWrapper
+        if 'pu_loss' in config and config['pu_loss']:
+            from ..representation.s4g_focal_maml.pu_loss import MultiTaskLossWrapper
+        else:
+            from ..representation.s4g_focal_maml.loss import MultiTaskLossWrapper
+        from ..representation.s4g_focal_maml.representation import S4GRepresentation
         from ..representation.s4g_focal_maml.activation import S4GActivation as ActivationLayer
         representation = S4GRepresentation(config)
         loss = MultiTaskLossWrapper(config).cuda()
