@@ -62,12 +62,14 @@ def compute_match(ps, pc_id, predict_prefix='', pc_prefix='', rot_th=5.0, topK=1
     pc_npy = np.load(pc_prefix+'/'+pc_id+'.npy') # load corresponding prediction ordered by confidence
     z_min = pc_npy[...,2].min()
     pc_npy = pc_npy[pc_npy[...,2]>z_min+0.005]
+    '''
     cloud = pcl.PointCloud(pc_npy)
     sor = cloud.make_voxel_grid_filter()
     sor.set_leaf_size(*([0.0015,]*3))
     cloud_filtered = sor.filter()
     pc_npy = np.asarray(cloud_filtered, dtype=np.float32)
     del cloud, sor, cloud_filtered
+    '''
     if use_vis:
         fig = mlab.figure(bgcolor=(0,0,0))
         col = (pc_npy[:,2] - pc_npy[:,2].min()) / (pc_npy[:,2].max() - pc_npy[:,2].min()) + 0.33

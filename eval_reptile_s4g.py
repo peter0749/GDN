@@ -70,6 +70,7 @@ def parse_args():
     parser.add_argument("--ngrasp", type=int, default=10, help="Simulate number of annotation labeled by humans.")
     parser.add_argument("--max_eval", type=int, default=60, help="")
     parser.add_argument("--pu_loss", action="store_true", default=False)
+    parser.add_argument("--pu_loss_type", type=str, default="sigmoid", help="")
     args = parser.parse_args()
     return args
 
@@ -91,6 +92,7 @@ if __name__ == '__main__':
         del config['pu_loss']
     if args.pu_loss:
         config['pu_loss'] = args.pu_loss
+        config['pu_loss_type'] = args.pu_loss_type
 
     k_dpp = args.nrot
     n_clusters = args.npos
@@ -184,6 +186,7 @@ if __name__ == '__main__':
                 optimizer.zero_grad()
                 pred = model(X)
                 loss, cls_loss = loss_function(pred, Y)[:2]
+                print("cls_loss: %.2f"%cls_loss, flush=True)
                 loss.backward()
                 optimizer.step()
 
