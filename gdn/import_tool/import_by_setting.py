@@ -118,20 +118,35 @@ def import_model_by_setting(config, mode='train'):
             from ..representation.s4g_focal_scene import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
-    elif config['representation'] == 's4g_focal_pu_bagging':
-        from ..representation.s4g_focal_pu_bagging.loss import MultiTaskLossWrapper
-        from ..representation.s4g_focal_pu_bagging.representation import S4GRepresentation
-        from ..representation.s4g_focal_pu_bagging.activation import S4GActivation as ActivationLayer
-        representation = S4GRepresentation(config)
+    elif config['representation'] == 'gdn_most_bagging':
+        from ..representation.gdn_most_bagging.loss import MultiTaskLossWrapper
+        from ..representation.gdn_most_bagging.representation import EulerRepresentation
+        from ..representation.gdn_most_bagging.activation import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
         loss = MultiTaskLossWrapper(config).cuda()
         if not ('tune_task_weights' in config and config['tune_task_weights']):
             freeze_model(loss)
         if mode == 'train':
-            from ..representation.s4g_focal_pu_bagging import GraspDataset, collate_fn_setup
+            from ..representation.gdn_most_bagging import GraspDataset, collate_fn_setup
             dataset = GraspDataset(config)
             my_collate_fn = collate_fn_setup(config, representation)
         else:
-            from ..representation.s4g_focal_pu_bagging import GraspDatasetVal, collate_fn_setup_val
+            from ..representation.gdn_most_bagging import GraspDatasetVal, collate_fn_setup_val
+            dataset = GraspDatasetVal(config)
+            my_collate_fn = collate_fn_setup_val(config)
+    elif config['representation'] == 'gdn_most_kd':
+        from ..representation.gdn_most_kd.loss import MultiTaskLossWrapper
+        from ..representation.gdn_most_kd.representation import EulerRepresentation
+        from ..representation.gdn_most_kd.activation import EulerActivation as ActivationLayer
+        representation = EulerRepresentation(config)
+        loss = MultiTaskLossWrapper(config).cuda()
+        freeze_model(loss)
+        if mode == 'train':
+            from ..representation.gdn_most_kd import GraspDataset, collate_fn_setup
+            dataset = GraspDataset(config)
+            my_collate_fn = collate_fn_setup(config, representation)
+        else:
+            from ..representation.gdn_most_kd import GraspDatasetVal, collate_fn_setup_val
             dataset = GraspDatasetVal(config)
             my_collate_fn = collate_fn_setup_val(config)
     elif config['representation'] == 's4g_focal_maml':

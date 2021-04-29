@@ -133,7 +133,7 @@ class MultiTaskLossWrapper(nn.Module):
             config['cls_w'], config['x_w'], config['y_w'], config['z_w'], config['rot_w']
         ]))
         self.log_vars = nn.Parameter(weight)
-        self.prior = 1e-3 # TODO: Use running means instead
+        self.prior = 3e-3 # TODO: Use running means instead
         self.loss_f = select_loss(config['pu_loss_type'])
     def forward(self, outputs, targets):
         ws = torch.exp(-self.log_vars)

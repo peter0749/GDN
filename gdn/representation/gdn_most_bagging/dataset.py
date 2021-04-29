@@ -206,10 +206,13 @@ class collate_fn_setup(object):
                 for (pose, ind) in zip(reversed(pose_batch[b]), reversed(enclosed_pt_batch[b])):
                     if len(ind)==0:
                         continue
-                    xyz, d9_rot = representation.grasp_representation(pose,
-                               pc_batch[b], # shape: (N, 3)
-                               ind)
-                    representation.update_feature_volume(feature_volume_batch[b], ind, xyz, d9_rot)
+                    (xyz,
+                     roll,
+                     pitch_index,
+                     pitch_residual,
+                     yaw_index,
+                     yaw_residual) = representation.grasp_representation(pose, pc_batch[b], ind)
+                    representation.update_feature_volume(feature_volume_batch[b], ind, xyz, roll, pitch_index, pitch_residual, yaw_index, yaw_residual)
             X.append(torch.FloatTensor(pc_batch))
             F.append(torch.FloatTensor(feature_volume_batch))
         return X, F, Ypre

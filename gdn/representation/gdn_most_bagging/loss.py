@@ -1,51 +1,28 @@
 from ...detector.utils import *
-import torch.nn.functional as F
 
 
-def select_loss(loss_name):
-    losses = {"logistic": lambda x: F.softplus(-x),
-              "sigmoid": lambda x: torch.sigmoid(-x),
-              "cross_entropy": lambda x: -torch.log(torch.sigmoid(x).clamp(1e-8, 1.-1e-8)),
-              "hinge": lambda x: F.relu(1.-x),
-              "double_hinge": lambda x: F.relu(torch.maximum((1.-x)*0.5, -x))
-              }
-    return losses[loss_name]
-
-
-def pu_loss(prior, loss_f, beta, pp, yy, **kwargs):
+def focal_loss(pp, yy, focal_alpha=0.25, focal_gamma=2.0, **kwargs):
     '''
-    Simplified + Batched version of PU Loss
-    Minimize the non-negative risk:
-    R_pu = pi * R_p^+ + max(0, R_u^- - pi * R_p^-)
-    ---
-    Reference from:
-        Ryuichi Kiryo, Gang Niu, Marthinus C. du Plessis, Masashi Sugiyama,
-        "Positive-Unlabeled Learning with Non-Negative Risk Estimator", NIPS 2017
-        src: https://github.com/kiryor/nnPUlearning/blob/master/pu_loss.py
+    Binary focal loss
     '''
 
-    x = pp.view(pp.size(0), -1) # model confidence
-    y = yy.view(yy.size(0), -1) # 0: unlabeled, 1: positive
+    p = pp.view(pp.size(0), -1)
+    y = yy.view(yy.size(0), -1)
 
-    positive, unlabeled = y, 1.-y
-    n_positive, n_unlabeled = torch.sum(positive, 1).clamp(min=1.), torch.sum(unlabeled, 1).clamp(min=1.)
+    pt = (p*y + (1-p)*(1-y)).clamp(1e-8,1-1e-8)         # pt = p if y > 0 else 1-p
+    w = focal_alpha*y + (1-focal_alpha)*(1-y)  # w = alpha if y > 0 else 1-alpha
+    w = w * (1-pt)**focal_gamma
+    loss = torch.sum(-w*pt.log(), 1) / torch.sum(y, 1).clamp(min=1.0) # In original paper, loss need to be normalized by the number of active anchors
 
-    x_in = x
-    y_positive = loss_f(x_in)
-    y_unlabeled = loss_f(-x_in)
-    positive_risk = prior * torch.sum(positive * y_positive, 1) / n_positive
-    negative_risk = torch.sum(unlabeled * y_unlabeled, 1) / n_unlabeled - prior * torch.sum(positive * y_unlabeled, 1) / n_positive
-    objective = torch.where(negative_risk < -beta, positive_risk - beta, positive_risk + negative_risk)
-
-    return objective.mean()
+    return loss.mean()
 
 
-def loss_baseline(prior, loss_f, y_pred, y_true, cls_w, x_w, y_w, z_w, rot_w, **kwargs):
+def loss_baseline(y_pred, y_true, y_neg_mask, cls_w, x_w, y_w, z_w, rot_w, **kwargs):
 
-    beta = 0.0
     pi = torch.acos(torch.zeros(1))[0] * 2
     accum_gt          = (y_true[...,0]>0) # binary: shape: (B, M, n_pitch, n_yaw, 1)
-    accum_p           = y_pred[...,0]
+    accum_p           = torch.sigmoid(y_pred[...,0]) # 0~1
+    cls_obj_mask = accum_gt | y_neg_mask # bootstrap sampling
 
     if accum_gt.any():
 
@@ -95,7 +72,7 @@ def loss_baseline(prior, loss_f, y_pred, y_true, cls_w, x_w, y_w, z_w, rot_w, **
         rot_p  = rotation_tensor(roll_p, pitch_p, yaw_p)
         ### End construct rotation matrix ###
 
-        cls_loss   = pu_loss(prior, loss_f, beta, accum_p, accum_gt.float(), **kwargs)
+        cls_loss   = focal_loss(accum_p[cls_obj_mask], accum_gt[cls_obj_mask].float(), **kwargs)
         x_loss     = torch.abs(x_p - x_gt).mean()
         y_loss     = torch.abs(y_p - y_gt).mean()
         z_loss     = torch.abs(z_p - z_gt).mean()
@@ -110,7 +87,7 @@ def loss_baseline(prior, loss_f, y_pred, y_true, cls_w, x_w, y_w, z_w, rot_w, **
             rot_loss * rot_w
         ), cls_loss.item(), x_loss.item(), y_loss.item(), z_loss.item(), rot_loss.item()
     else:
-        cls_loss   = pu_loss(prior, loss_f, beta, accum_p, accum_gt.float(), **kwargs)
+        cls_loss   = focal_loss(accum_p[cls_obj_mask], accum_gt[cls_obj_mask].float(), **kwargs)
         x_loss     = 0
         y_loss     = 0
         z_loss     = 0
@@ -133,12 +110,10 @@ class MultiTaskLossWrapper(nn.Module):
             config['cls_w'], config['x_w'], config['y_w'], config['z_w'], config['rot_w']
         ]))
         self.log_vars = nn.Parameter(weight)
-        self.prior = 3e-3 # TODO: Use running means instead
-        self.loss_f = select_loss(config['pu_loss_type'])
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, bootstrap_mask):
         ws = torch.exp(-self.log_vars)
         (loss, cls_loss, x_loss, y_loss, z_loss,
-                rot_loss) = loss_baseline(self.prior, self.loss_f, outputs, targets,
+                rot_loss) = loss_baseline(outputs, targets, bootstrap_mask,
                 ws[0],
                 ws[1],
                 ws[2],
