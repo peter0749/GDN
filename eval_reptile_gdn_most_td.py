@@ -71,6 +71,7 @@ def parse_args():
     parser.add_argument("--max_eval", type=int, default=60, help="")
     parser.add_argument("--pu_loss", action="store_true", default=False)
     parser.add_argument("--pu_loss_type", type=str, default="sigmoid", help="")
+    parser.add_argument("--nneighbors", type=int, default=50, help="Simulate number of annotation labeled by humans.")
     args = parser.parse_args()
     return args
 
@@ -182,6 +183,7 @@ if __name__ == '__main__':
                                                      yaw_residual)
         Xs = torch.cat(Xs).float()
         Ys = torch.from_numpy(Ys).float()
+        Ys[...,0].clamp_(0, 1)
 
         # Start fine-tune
         print("Fine-tuning...", flush=True)
@@ -198,23 +200,26 @@ if __name__ == '__main__':
                 pred, h = model(X)
                 # Label propagation
                 with torch.no_grad():
-                    Ws_inv = make_propagation_kernel(h) # (B, N, N)
-                    K = 200
-                    inds = list(np.random.choice(X.size(1), K, replace=False))
-                    inds.sort()
+                    Ws_inv = make_propagation_kernel(h, n_neighbors=args.nneighbors) # (B, N, N)
+                    #K = 3000
+                    #inds = list(np.random.choice(X.size(1), K, replace=False))
+                    #inds.sort()
                     print("W: " + str(Ws_inv.size()))
                     print("Y: " + str(Y.size()))
-                    Wb = Ws_inv[:, inds, :][:, :, inds]
-                    print("Wb: "+ str(Wb.size()))
-                    Yb = Y[:, inds].reshape(Y_shape[0], K, -1)
-                    print("Yb: "+ str(Yb.size()))
-                    Z = torch.bmm(Wb, Yb).reshape(Y_shape[0], K, *Y_shape[2:]) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
-                    Z[...,:4].clamp_(0, 1) # c, x, y, z
+                    #Wb = Ws_inv[:, inds, :][:, :, inds]
+                    #print("Wb: "+ str(Wb.size()))
+                    #Yb = Y_cpu[:, inds].view(Y_shape[0], K, -1).cpu()
+                    #print("Yb: "+ str(Yb.size()))
+                    #Z = torch.bmm(Wb, Yb).reshape(Y_shape[0], K, *Y_shape[2:]) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
+                    Z = torch.bmm(Ws_inv, Y_cpu.view(Y_shape[0], Y_shape[1], -1)).reshape(*Y_shape) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
+                    Z[...,0:4].clamp_(0, 1) # x, y, z
                     Z[...,6:8].clamp_(0, 1) # pitch, yaw
                     Z[...,4:6] = Z[...,4:6]/torch.norm(Z[...,4:6], p=2, dim=-1, keepdim=True).clamp(min=1e-8) # roll
-                    Y_new = torch.zeros_like(Y)
-                    Y_new[:, inds] = Z
-                    Y_new[Y!=0] = Y[Y!=0]
+                    #Y_new = torch.zeros_like(Y_cpu)
+                    #Y_new[:, inds] = Z
+                    Y_new = Z
+                    Y_new[Y_cpu!=0] = Y_cpu[Y_cpu!=0]
+                    Ys_new.append(Y_new)
 
                 loss, cls_loss = loss_function(pred, Y_new)[:2]
                 print("cls_loss: %.2f"%cls_loss, flush=True)

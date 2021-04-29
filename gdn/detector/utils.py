@@ -9,7 +9,7 @@ from pointnet2.utils import pointnet2_utils
 from .knn import search_index_pytorch_fast
 
 
-def make_kernel(D, I, sigma=1.0, lp_alpha=0.99):
+def make_kernel(D, I, sigma=0.1, lp_alpha=0.7):
     I = I[:,1:]
     D = D[:,1:]
     D = np.exp(-D / (sigma**2.0))
@@ -51,7 +51,7 @@ def make_propagation_kernel(h, n_neighbors=5):
             W_inv = W_T.mm(W).inverse().mm(W.T)
             Ws_inv.append(W_inv.unsqueeze(0))
         del Ws
-        return torch.cat(Ws_inv, 0).to(h.device)
+        return torch.cat(Ws_inv, 0)
 
 def freeze_model(m):
     for param in m.parameters():
