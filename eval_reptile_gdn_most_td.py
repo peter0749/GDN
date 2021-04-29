@@ -193,7 +193,8 @@ if __name__ == '__main__':
             for start in range(0, len(Xs), args.batch_size):
                 mbinds = batch_inds[start:start+args.batch_size]
                 X = Xs[mbinds].cuda()
-                Y = Ys[mbinds].cuda() # (B, N, 16, 17, 8)
+                Y_cpu = Ys[mbinds] # (B, N, 16, 17, 8)
+                Y = Y_cpu.cuda()
                 Y_shape = Y.size()
                 optimizer.zero_grad()
 
@@ -219,9 +220,8 @@ if __name__ == '__main__':
                     #Y_new[:, inds] = Z
                     Y_new = Z
                     Y_new[Y_cpu!=0] = Y_cpu[Y_cpu!=0]
-                    Ys_new.append(Y_new)
 
-                loss, cls_loss = loss_function(pred, Y_new)[:2]
+                loss, cls_loss = loss_function(pred, Y_new.cuda())[:2]
                 print("cls_loss: %.2f"%cls_loss, flush=True)
                 loss.backward()
                 optimizer.step()
