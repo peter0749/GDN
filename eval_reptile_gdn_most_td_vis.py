@@ -217,7 +217,7 @@ if __name__ == '__main__':
             Ys_new.append(Y_new)
     print("Avg. LP time: %.2f"%(time_s/time_n))
     Ys_new = torch.cat(Ys_new).float()
-    pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=400, threshold=-np.inf, nms=False)
+    pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=400, threshold=-np.inf, nms=True)
     pred_poses = representation.filter_out_invalid_grasp_batch(Xs.numpy().astype(np.float32), pred_poses)
     for pose, id_, origin in zip(pred_poses, IDs, origins):
         prefix = args.output_dir
