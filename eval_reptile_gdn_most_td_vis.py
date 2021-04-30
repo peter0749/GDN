@@ -6,6 +6,7 @@ import open3d
 #mlab.options.offscreen = True
 
 import os
+import time
 import sys
 import json
 import pickle
@@ -68,6 +69,7 @@ def parse_args():
     parser.add_argument("--npos", type=int, default=7, help="Simulate number of annotation labeled by humans.")
     parser.add_argument("--ngrasp", type=int, default=10, help="Simulate number of annotation labeled by humans.")
     parser.add_argument("--nneighbors", type=int, default=50, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--nnode", type=int, default=1000, help="Simulate number of annotation labeled by humans.")
     args = parser.parse_args()
     return args
 
@@ -184,6 +186,8 @@ if __name__ == '__main__':
     # Start fine-tune
     print("Generating pseudo-labels...", flush=True)
     model.train() # simulate fine-tune stage
+    time_n = 0
+    time_s = 0
     for start in tqdm(range(0, len(Xs), args.batch_size)):
         X = Xs[start:start+args.batch_size].cuda()
         Y_cpu = Ys[start:start+args.batch_size] # (B, N, 16, 17, 8)
@@ -194,26 +198,24 @@ if __name__ == '__main__':
         pred, h = model(X)
         # Label propagation
         with torch.no_grad():
-            Ws_inv = make_propagation_kernel(h, n_neighbors=args.nneighbors) # (B, N, N)
-            #K = 3000
-            #inds = list(np.random.choice(X.size(1), K, replace=False))
-            #inds.sort()
-            print("W: " + str(Ws_inv.size()))
-            print("Y: " + str(Y.size()))
-            #Wb = Ws_inv[:, inds, :][:, :, inds]
-            #print("Wb: "+ str(Wb.size()))
-            #Yb = Y_cpu[:, inds].view(Y_shape[0], K, -1).cpu()
-            #print("Yb: "+ str(Yb.size()))
-            #Z = torch.bmm(Wb, Yb).reshape(Y_shape[0], K, *Y_shape[2:]) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
-            Z = torch.bmm(Ws_inv, Y_cpu.view(Y_shape[0], Y_shape[1], -1)).reshape(*Y_shape) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
+            s_time = time.time()
+            inds = list(np.random.choice(X.size(1), args.nnode, replace=False))
+            inds.sort()
+            Wb = make_propagation_kernel(h[:,:,inds], n_neighbors=args.nneighbors).cuda() # (B, N, N)
+            print("Wb: "+ str(Wb.size()))
+            Yb = Y[:, inds].view(Y_shape[0], args.nnode, -1)
+            print("Yb: "+ str(Yb.size()))
+            Z = torch.bmm(Wb, Yb).reshape(Y_shape[0], args.nnode, *Y_shape[2:]) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
             Z[...,0:4].clamp_(0, 1) # x, y, z
             Z[...,6:8].clamp_(0, 1) # pitch, yaw
             Z[...,4:6] = Z[...,4:6]/torch.norm(Z[...,4:6], p=2, dim=-1, keepdim=True).clamp(min=1e-8) # roll
-            #Y_new = torch.zeros_like(Y_cpu)
-            #Y_new[:, inds] = Z
-            Y_new = Z
+            Y_new = torch.zeros_like(Y_cpu)
+            Y_new[:, inds] = Z.cpu()
             Y_new[Y_cpu!=0] = Y_cpu[Y_cpu!=0]
+            time_s += time.time() - s_time
+            time_n += 1.
             Ys_new.append(Y_new)
+    print("Avg. LP time: %.2f"%(time_s/time_n))
     Ys_new = torch.cat(Ys_new).float()
     pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=400, threshold=-np.inf, nms=False)
     pred_poses = representation.filter_out_invalid_grasp_batch(Xs.numpy().astype(np.float32), pred_poses)
