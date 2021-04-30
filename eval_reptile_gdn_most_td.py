@@ -71,7 +71,7 @@ def parse_args():
     parser.add_argument("--max_eval", type=int, default=60, help="")
     parser.add_argument("--pu_loss", action="store_true", default=False)
     parser.add_argument("--pu_loss_type", type=str, default="sigmoid", help="")
-    parser.add_argument("--nneighbors", type=int, default=20, help="Simulate number of annotation labeled by humans.")
+    parser.add_argument("--nneighbors", type=int, default=50, help="Simulate number of annotation labeled by humans.")
     parser.add_argument("--nnode", type=int, default=1000, help="Simulate number of annotation labeled by humans.")
     args = parser.parse_args()
     return args
