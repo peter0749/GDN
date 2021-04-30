@@ -206,9 +206,13 @@ if __name__ == '__main__':
             Yb = Y[:, inds].view(Y_shape[0], args.nnode, -1)
             print("Yb: "+ str(Yb.size()))
             Z = torch.bmm(Wb, Yb).reshape(Y_shape[0], args.nnode, *Y_shape[2:]) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
-            Z[...,0:4].clamp_(0, 1) # x, y, z
-            Z[...,6:8].clamp_(0, 1) # pitch, yaw
+            norm = torch.norm(Z[...,4:6], p=2, dim=-1)
+            ignore = tuple(((norm>1.0) | (norm<1e-4) | (Z[...,0]<=0)).nonzero().transpose(0, 1).contiguous())
+            Z[ignore] = 0.0
+            Z[...,0].clamp_(0.0, 0.9) # x, y, z
+            Z[...,1:4].clamp_(0.3, 0.7) # x, y, z
             Z[...,4:6] = Z[...,4:6]/torch.norm(Z[...,4:6], p=2, dim=-1, keepdim=True).clamp(min=1e-8) # roll
+            Z[...,6:8].clamp_(0.3, 0.7) # pitch, yaw
             Y_new = torch.zeros_like(Y_cpu)
             Y_new[:, inds] = Z.cpu()
             Y_new[Y_cpu!=0] = Y_cpu[Y_cpu!=0]
