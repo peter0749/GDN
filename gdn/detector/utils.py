@@ -9,7 +9,7 @@ from pointnet2.utils import pointnet2_utils
 from .knn import search_index_pytorch_fast
 
 
-def make_kernel(D, I, sigma=0.5, lp_alpha=0.9):
+def make_kernel(D, I, sigma=5.0, lp_alpha=0.9):
     I = I[:,1:]
     D = D[:,1:]
     D = np.exp(-D / (sigma**2.0))

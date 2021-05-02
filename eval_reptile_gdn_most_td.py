@@ -185,6 +185,7 @@ if __name__ == '__main__':
         Xs = torch.cat(Xs).float()
         Ys = torch.from_numpy(Ys).float()
         Ys[...,0].clamp_(0, 1)
+        print("Positive / batch (before): %.4f"%(torch.sum(Ys[...,0]>0) / Ys.size(0)))
 
         # Start fine-tune
         print("Fine-tuning...", flush=True)
@@ -196,6 +197,7 @@ if __name__ == '__main__':
                 X = Xs[mbinds].cuda()
                 Y_cpu = Ys[mbinds] # (B, N, 16, 17, 8)
                 Y = Y_cpu.cuda()
+                gt_mask = tuple((Y[...,0]>0).nonzero().transpose(0, 1).contiguous())
                 Y_shape = Y.size()
                 optimizer.zero_grad()
 
@@ -210,17 +212,27 @@ if __name__ == '__main__':
                     print("Yb: "+ str(Yb.size()))
                     Z = torch.bmm(Wb, Yb).reshape(Y_shape[0], args.nnode, *Y_shape[2:]) # (B, N, N) @ (B, N, ?) -> (B, N, ?)
                     norm = torch.norm(Z[...,4:6], p=2, dim=-1)
-                    ignore = tuple(((norm>1.0) | (norm<1e-4) | (Z[...,0]<=0)).nonzero().transpose(0, 1).contiguous())
-                    Z[ignore] = 0.0
-                    Z[...,0].clamp_(0.0, 0.9) # x, y, z
-                    Z[...,1:4].clamp_(0.3, 0.7) # x, y, z
+                    conf_lower  = 0.05
+                    conf_higher = float("inf")
+                    norm_lower = 1e-6
+                    norm_higher = float("inf")
+                    sigmoid_clip = (0.1, 0.9)
+                    conf_clip = (0.0, 0.9)
+                    ignore = tuple(((norm>norm_higher) | (norm<norm_lower) |
+                             torch.any((Z[...,[0,1,2,3,6,7]]<=conf_lower) | (Z[...,[0,1,2,3,6,7]]>=conf_higher), -1)).nonzero().transpose(0, 1).contiguous())
+                    Z[...,0] -= conf_lower
+                    Z[...,0].clamp_(*conf_clip) # x, y, z
+                    Z[...,1:4].clamp_(*sigmoid_clip) # x, y, z
                     Z[...,4:6] = Z[...,4:6]/torch.norm(Z[...,4:6], p=2, dim=-1, keepdim=True).clamp(min=1e-8) # roll
-                    Z[...,6:8].clamp_(0.3, 0.7) # pitch, yaw
+                    Z[...,6:8].clamp_(*sigmoid_clip) # pitch, yaw
+                    Z[ignore] = 0.0
                     Y_new = torch.zeros_like(Y_cpu)
                     Y_new[:, inds] = Z.cpu()
-                    Y_new[Y_cpu!=0] = Y_cpu[Y_cpu!=0]
+                    Y_new[gt_mask] = Y_cpu[gt_mask]
+                    Y_new = Y_new.cuda()
 
-                loss, cls_loss = loss_function(pred, Y_new.cuda())[:2]
+                loss, cls_loss = loss_function(pred, Y_new)[:2]
+                print("Positive / batch (after): %.4f"%(torch.sum(Y_new[...,0]>0) / Y_new.size(0)))
                 print("cls_loss: %.2f"%cls_loss, flush=True)
                 loss.backward()
                 optimizer.step()
