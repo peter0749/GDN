@@ -1,5 +1,7 @@
 # coding: utf-8
 
+import open3d
+
 import sys
 import os
 import glob
@@ -115,7 +117,7 @@ def AP(results, topK=10):
 
 if __name__ == '__main__':
     # In[14]:
-    thresholds = [5, 10, 15]
+    thresholds = [10,]
     parser = ArgumentParser()
     parser.add_argument("config", type=str, help="Path to config file")
     parser.add_argument("gt", type=str, help="Ground truth prefix")
@@ -171,6 +173,6 @@ if __name__ == '__main__':
     for rot_th in thresholds:
         mAP_at_threshold[rot_th] = np.mean(APs_at_threshold[rot_th])
     for rot_th in thresholds:
-        print('mAP@%d: %.4f'%(rot_th, mAP_at_threshold[rot_th]))
+        print('mAP@%d: %.4f'%(rot_th, mAP_at_threshold[rot_th]), flush=True)
     with open(output, 'w') as fp:
         fp.write(json.dumps({'mAP': mAP_at_threshold, 'APs': APs_at_threshold}))

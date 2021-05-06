@@ -34,6 +34,7 @@ initEigen(0)
 from gdn.utils import *
 from gdn.detector.utils import *
 from gdn import import_model_by_setting
+from gdn.representation.s4g_focal_maml.activation import cvtD6SO3
 import importlib
 import copy
 from argparse import ArgumentParser
@@ -75,7 +76,9 @@ def parse_args():
     parser.add_argument("--nneighbors", type=int, default=3, help="")
     parser.add_argument("--nnode", type=int, default=3000, help="")
     parser.add_argument("--alpha", type=float, default=0.99, help="")
-    parser.add_argument("--conf_lo", type=float, default=0.1, help="")
+    parser.add_argument("--conf_lo", type=float, default=0.2, help="")
+    #parser.add_argument("--conf_hi", type=float, default=0.3, help="")
+    #parser.add_argument("--conf_bw", type=float, default=0.8, help="")
     args = parser.parse_args()
     return args
 
@@ -125,9 +128,9 @@ if __name__ == '__main__':
 
     batch_iterator = iter(dataloader)
 
-    # Prepare batches
     if args.ntrain > 0:
-        print("Preparing training batches...", flush=True)
+        # Prepare batches
+        print("Preparing GT...", flush=True)
         Xs = [] # point clouds
         Ys = np.zeros((args.ntrain,
                        config['input_points'],
@@ -135,7 +138,7 @@ if __name__ == '__main__':
                       dtype=np.float32)
         for b in tqdm(range(args.ntrain)):
             batch = next(batch_iterator)
-            pc, hand_poses = batch[:2]
+            pc, hand_poses, pc_origin, scene_ids = batch
             poses = hand_poses[0]
             if len(poses) > n_clusters:
                 kmeans = KMeans(n_clusters=n_clusters, max_iter=100, n_init=3, verbose=False)
@@ -172,28 +175,17 @@ if __name__ == '__main__':
                 enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
                 if len(enclosed_pts)==0:
                     continue
-                (xyz,
-                 roll,
-                 pitch_index,
-                 pitch_residual,
-                 yaw_index,
-                 yaw_residual) = representation.grasp_representation(pose, pc_npy, enclosed_pts)
-                representation.update_feature_volume(Ys[b], enclosed_pts,
-                                                     xyz,
-                                                     roll,
-                                                     pitch_index,
-                                                     pitch_residual,
-                                                     yaw_index,
-                                                     yaw_residual)
+                (xyz, d9_rot) = representation.grasp_representation(pose,
+                     pc_npy, # shape: (N, 3)
+                     enclosed_pts)
+                representation.update_feature_volume(Ys[b], enclosed_pts, xyz, d9_rot)
         Xs = torch.cat(Xs).float()
         Ys = torch.from_numpy(Ys).float()
         Ys[...,0].clamp_(0, 1)
-        print("Positive / batch (before): %.4f"%(torch.sum(Ys[...,0]>0) / Ys.size(0)))
+        print("Positive / batch (before): %.4f"%(torch.sum(Ys[...,0]>0) / Ys.size(0)), flush=True)
 
-        # Start fine-tune
         for t_epoch in range(1, args.nepoch+1):
             print("=== Epoch #%d ==="%t_epoch)
-
             Hs = []
             Hs_unk = []
             Inds_sub = []
@@ -221,64 +213,29 @@ if __name__ == '__main__':
 
             with torch.no_grad():
                 Ys_new = torch.zeros_like(Ys)
-                ind_pos = tuple(torch.any(torch.any(Ys[...,0]>0, -1), -1).nonzero().transpose(0, 1).contiguous())
                 gt_mask = tuple((Ys[...,0]>0).nonzero().transpose(0, 1).contiguous())
                 Ys_shape = Ys.size()
-                Hs_pos = Hs.transpose(1, 2)[ind_pos].view(-1, C).transpose(0, 1).contiguous()
-                Ys_pos = Ys.view(Ys.size(0), Ys.size(1), -1)[ind_pos].reshape(-1, *Ys_shape[2:])
-                # Y: (B, N, 16, 17, 8) -> (B, N, -1) -> (?, -1) -> (?, 16, 17, 8)
-                # pitch_base_inds: (16,) -> (1, 16, 1) -> (?, 16, 17)
-                # yaw_base_inds: (17,) -> (1, 1, 17) -> (?, 16, 17)
-                # make pitch and yaw back to contiguous space
-                pitch_base_inds = torch.arange(Ys_shape[2], dtype=Ys_pos.dtype, device=Ys_pos.device).reshape(1, Ys_shape[2], 1)
-                yaw_base_inds = torch.arange(Ys_shape[3], dtype=Ys_pos.dtype, device=Ys_pos.device).reshape(1, 1, Ys_shape[3])
-                Ys_pos[:,:,:,6] += pitch_base_inds.expand(Ys_pos.size(0), Ys_shape[2], Ys_shape[3]) # [0, 16)
-                Ys_pos[:,:,:,7] += yaw_base_inds.expand(Ys_pos.size(0), Ys_shape[2], Ys_shape[3]) # [0, 17)
+                Hs_pos = Hs.transpose(1, 2)[gt_mask].view(-1, C).transpose(0, 1).contiguous()
+                Ys_pos = Ys.view(Ys.size(0), Ys.size(1), -1)[gt_mask].contiguous()
                 # Label propagation
                 for b in range(Xs.size(0)):
                     s_time = time.time()
                     Wb = make_propagation_kernel(torch.cat((Hs_unk[b], Hs_pos), -1), n_neighbors=args.nneighbors, alpha=args.alpha)
-                    Yb = torch.zeros(args.nnode, *Ys_shape[2:], dtype=Ys_pos.dtype, device=Ys_pos.device) # unk: (nnode, 16, 17, 8)
-                    Yb[...,1] = 0.8 # To prevent collision?
-                    Yb[...,2:4] = 0.5 # y, z offset initize w/ center=0.5
-                    Yb[...,6] = Ys_shape[2] * 0.5
-                    Yb[...,7] = Ys_shape[3] * 0.5
+                    Yb = torch.zeros(args.nnode, Ys_pos.size(1), dtype=Ys_pos.dtype, device=Ys_pos.device) # unk: (nnode, -1)
                     Yb = torch.cat((Yb, Ys_pos), 0) # + has label (nnode+|Y|, -1)
-                    Z = (1-args.alpha) * torch.mm(Wb, Yb.view(Wb.size(1), -1)).reshape(Yb.size(0), *Ys_shape[2:]) # (K, K) @ (K, ?) -> (K, ?)
+                    Z = (1-args.alpha) * torch.mm(Wb, Yb).reshape(Yb.size(0), *Ys_shape[2:]) # (K, K) @ (K, ?) -> (K, ?)
                     Z = Z[:args.nnode]
-                    norm  = torch.norm(Z[...,4:6], p=2, dim=-1, keepdim=False)
                     print("C_min C_max: %.4e %.4e"%(Z[...,0].min(), Z[...,0].max()))
-                    print("N_min N_max: %.4e %.4e"%(norm.min(), norm.max()))
 
-                    p = F.softmax(Z[...,0].view(Z.size(0), -1), 1).clamp(min=1e-8) # (K, 16*17)
-                    entropy = -torch.sum(p*p.log(), 1) # (K, )
-                    certainty = 1.0 - (entropy-entropy.min()) / (entropy.max()-entropy.min()) # (K, )
-                    certainty_point = certainty.unsqueeze(-1).unsqueeze(-1) # (K, 1, 1)
-                    certainty_point = certainty_point.expand(p.size(0), *Ys_shape[2:4]) # (K, 16, 17)
-                    centerness = 1.0 - (Z[...,2]-0.5).abs() * 2.0
+                    # Convert SO3 to D6
+                    d6 = Z[...,1:10].view(-1, 3, 3)[:,:,:2].reshape(-1, 6)
+                    Z[...,1:10] = cvtD6SO3(d6).reshape(Z.size(0), 9)
 
-                    # re-weight
-                    weights = certainty_point * centerness
-                    Z[...,0] = Z[...,0] * weights
-                    print("C_min C_max: %.4e %.4e (re-weighted)"%(Z[...,0].min(), Z[...,0].max()))
-
-                    Z[...,4:6] = Z[...,4:6] / norm.unsqueeze(-1).clamp(min=1e-10) # roll
-                    Z[...,6].clamp_(0, Ys_shape[2]) # [0, 16)
-                    Z[...,7].clamp_(0, Ys_shape[3]) # [0, 17)
-                    for k in range(Z.size(0)):
-                        new_grasp_points = torch.zeros(*Z.size()[1:], dtype=Z.dtype, device=Z.device)
-                        grasp_point = Z[k].reshape(-1, Z.size(-1)) # (16*17, 8)
-                        order = torch.sort(grasp_point[:,0])[1] # sort by confidence
-                        grasp_point = grasp_point[order]
-                        pitch_i = grasp_point[:,6].long().clamp(0, Ys_shape[2]-1)
-                        grasp_point[:,6] = (grasp_point[:,6] - pitch_i.float()).clamp(0, 1)
-                        yaw_i = grasp_point[:,7].long().clamp(0, Ys_shape[3]-1)
-                        grasp_point[:,7] = (grasp_point[:,7] - yaw_i.float()).clamp(0, 1)
-                        # overwrites lower conf. grasp point w/ higher conf. one
-                        new_grasp_points[pitch_i,yaw_i] = grasp_point
-                        Z[k] = new_grasp_points
-                    print("C_min C_max: %.4e %.4e (re-ranked)"%(Z[...,0].min(), Z[...,0].max()))
-                    Z[...,0] = (Z[...,0]>args.conf_lo).float()
+                    # ignore pseudo-labels w/ low conf.
+                    ignore = Z[...,0] < args.conf_lo
+                    #Z[...,0] = ((Z[...,0] - args.conf_lo) / (args.conf_hi - args.conf_lo)).clamp(0, 1) * args.conf_bw + (1.0 - args.conf_bw) / 2.0
+                    Z[...,0] = 1.0
+                    Z[ignore,0] = 0.0
                     Ys_new[b][Inds_sub[b]] = Z
                     time_s += time.time() - s_time
                     time_n += 1.
@@ -286,8 +243,15 @@ if __name__ == '__main__':
             print("Avg. LP time: %.2f"%(time_s/time_n))
             print("Positive / batch (after): %.4f"%(torch.sum(Ys_new[...,0]>0) / Ys_new.size(0)))
             print("Computing collision...")
-            pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=2000, threshold=0.0, nms=False)
-            pred_poses = representation.filter_out_invalid_grasp_batch(Xs.numpy().astype(np.float32), pred_poses, n_collision=0)
+            pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=10000, threshold=0.0, nms=False)
+            # Dirty hack...
+            config_bak = copy.deepcopy(representation.config)
+            representation.config['hand_height'] = config['hand_height_eval']
+            representation.config['gripper_width'] = config['gripper_width_eval']
+            representation.config['thickness_side'] = config['thickness_side_eval']
+            representation.config['thickness'] = config['thickness_eval']
+            pred_poses = representation.filter_out_invalid_grasp_batch(Xs.numpy().astype(np.float32), pred_poses)
+            representation.config = config_bak
             print("Generating new Ys...")
             Ys_new = Ys_new.numpy().astype(np.float32)
             for b in range(Xs.size(0)):
@@ -297,22 +261,12 @@ if __name__ == '__main__':
                     enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
                     if len(enclosed_pts)==0:
                         continue
-                    (xyz,
-                     roll,
-                     pitch_index,
-                     pitch_residual,
-                     yaw_index,
-                     yaw_residual) = representation.grasp_representation(pose, pc_npy, enclosed_pts)
-                    representation.update_feature_volume(Ys_new[b], enclosed_pts,
-                                                         xyz,
-                                                         roll,
-                                                         pitch_index,
-                                                         pitch_residual,
-                                                         yaw_index,
-                                                         yaw_residual)
-                    Ys_new[b,enclosed_pts,pitch_index,yaw_index,0] = score
+                    (xyz, d9_rot) = representation.grasp_representation(pose,
+                         pc_npy, # shape: (N, 3)
+                         enclosed_pts)
+                    representation.update_feature_volume(Ys_new[b], enclosed_pts, xyz, d9_rot)
+                    Ys_new[b,enclosed_pts,0] = score
             Ys_new = torch.from_numpy(Ys_new)
-
             # Start fine-tune
             print("Fine-tuning...", flush=True)
             model.train()
@@ -343,7 +297,7 @@ if __name__ == '__main__':
             pc_npy = pc.cpu().numpy() + pc_origin # (B, N, 3) + (B, 1, 3)
             pc_npy = pc_npy.astype(np.float32)
             pred = pred.cpu().numpy().astype(np.float32)
-            pred_poses = representation.retrive_from_feature_volume_batch(pc_npy, pred, n_output=400, threshold=-1e8, nms=True)
+            pred_poses = representation.retrive_from_feature_volume_batch(pc_npy, pred, n_output=2000, threshold=-1e8, nms=True)
             pred_poses = representation.filter_out_invalid_grasp_batch(pc_npy, pred_poses)
             for pose, id_ in zip(pred_poses, scene_ids):
                 prefix = args.output_dir
@@ -357,5 +311,5 @@ if __name__ == '__main__':
                 with open(prefix+'/'+id_+'.meta', 'wb') as fp:
                     pickle.dump(meta, fp, protocol=2, fix_imports=True)
                 np.save(prefix+'/'+id_+'.npy', lpose_3x4)
-                print('Processed: {} {:s}'.format(id_, str(lpose_3x4.shape)), flush=True)
+                print('Processed: {} {:s}'.format(id_, str(lpose_3x4.shape)))
                 n_evaled += 1

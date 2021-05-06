@@ -9,7 +9,7 @@ from pointnet2.utils import pointnet2_utils
 from .knn import search_index_pytorch_fast
 
 
-def make_kernel(D, I, sigma=5.0, lp_alpha=0.9):
+def make_kernel(D, I, lp_alpha, sigma=0.5):
     I = I[:,1:]
     D = D[:,1:]
     D = np.exp(-D / (sigma**2.0))
@@ -30,28 +30,20 @@ def make_kernel(D, I, sigma=5.0, lp_alpha=0.9):
     return A
 
 
-def make_propagation_kernel(h, n_neighbors=5):
+def make_propagation_kernel(h, n_neighbors=5, alpha=0.99):
     '''
-    h: (B, 128, N)
+    h: (128, N)
     '''
-    B, C, N = h.size()
+    C, N = h.size()
     faiss_index = faiss.IndexFlatL2(C)
-    h_cpu = np.transpose(h.cpu().numpy(), (0, 2, 1))
-    Ws = []
-    Ws_inv = []
-    with torch.no_grad():
-        for b in range(B):
-            D, I = search_index_pytorch_fast(faiss_index, h_cpu[b], n_neighbors+1)
-            I = np.clip(I, 0, N - 1)
-            W = make_kernel(D, I)
-            Ws.append(W)
-        for b in range(B):
-            W = Ws[b]
-            W_T = W.T
-            W_inv = W_T.mm(W).inverse().mm(W.T)
-            Ws_inv.append(W_inv.unsqueeze(0))
-        del Ws
-        return torch.cat(Ws_inv, 0)
+    h_cpu = h.cpu().numpy().T
+    D, I = search_index_pytorch_fast(faiss_index, h_cpu, n_neighbors+1)
+    I = np.clip(I, 0, N - 1)
+    W = make_kernel(D, I, alpha)
+    W_T = W.T
+    W_inv = W_T.mm(W).inverse().mm(W.T)
+    return W_inv
+
 
 def freeze_model(m):
     for param in m.parameters():

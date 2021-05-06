@@ -29,6 +29,9 @@ class Pointnet2MSG(nn.Module):
         super(Pointnet2MSG, self).__init__()
 
         self.config = config
+        self.return_embedding = False
+        if 'return_embedding' in self.config and self.config['return_embedding']:
+            self.return_embedding = True
         # "subsample_levels": [1024, 256, 64]
         self.SA_modules = nn.ModuleList()
         c_in = input_channels
@@ -109,7 +112,8 @@ class Pointnet2MSG(nn.Module):
                 l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
             )
 
-        x = self.FC_layer(l_features[0]).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8)
+        h = l_features[0]
+        x = self.FC_layer(h).transpose(1, 2).contiguous() # (B, M, n_pitch*n_yaw*8)
         x = x.view(x.size(0), x.size(1), *self.config['output_dim'])
 
-        return self.activation_layer(x)
+        return (self.activation_layer(x), h) if self.return_embedding else self.activation_layer(x)

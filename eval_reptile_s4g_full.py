@@ -167,7 +167,7 @@ if __name__ == '__main__':
             pc_npy = pc.cpu().numpy() + pc_origin # (B, N, 3) + (B, 1, 3)
             pc_npy = pc_npy.astype(np.float32)
             pred = pred.cpu().numpy().astype(np.float32)
-            pred_poses = representation.retrive_from_feature_volume_batch(pc_npy, pred, n_output=200, threshold=-1e8, nms=True)
+            pred_poses = representation.retrive_from_feature_volume_batch(pc_npy, pred, n_output=3000, threshold=-1e8, nms=True)
             pred_poses = representation.filter_out_invalid_grasp_batch(pc_npy, pred_poses)
             for pose, id_ in zip(pred_poses, scene_ids):
                 prefix = args.output_dir
