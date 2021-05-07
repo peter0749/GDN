@@ -27,7 +27,7 @@ def pu_loss(prior, loss_f, beta, pp, yy, epsilon=1e-10, **kwargs):
     negative_risk = torch.sum(unlabeled * y_unlabeled, 1) / n_unlabeled - prior * torch.sum(positive * y_unlabeled, 1) / n_positive
     objective = torch.where(negative_risk < -beta, positive_risk - beta, positive_risk + negative_risk)
 
-    return objective.mean()
+    return objective
 
 
 def loss_baseline(prior, loss_f, y_pred, y_true, cls_w, rot_w, trans_w, **kwargs):
@@ -54,7 +54,7 @@ def loss_baseline(prior, loss_f, y_pred, y_true, cls_w, rot_w, trans_w, **kwargs
                                       [0,  0, -1]]]).to(rot_p.device) # (1, 3, 3)
         rot_180 = rot_180.expand(rot_gt.size(0), 3, 3) # (N, 3, 3)
 
-        cls_loss       = pu_loss(prior, loss_f, beta, accum_p, y_true[...,0].clamp(0,1), **kwargs)
+        cls_loss       = pu_loss(prior, loss_f, beta, accum_p, y_true[...,0].clamp(0,1), **kwargs).mean()
         rot_loss_fold1 = (rot_p - rot_gt).pow(2).view(rot_gt.size(0), -1).mean(1) # (N, 3, 3) -> (N, 9) -> (N,)
         rot_loss_fold2 = (rot_p - torch.bmm(rot_180, rot_gt)).pow(2).view(rot_gt.size(0), -1).mean(1)
         rot_loss = torch.min(rot_loss_fold1, rot_loss_fold2).mean()
@@ -66,7 +66,7 @@ def loss_baseline(prior, loss_f, y_pred, y_true, cls_w, rot_w, trans_w, **kwargs
             trans_loss * trans_w
         ), cls_loss.item(), rot_loss.item(), trans_loss.item()
     else:
-        cls_loss = pu_loss(prior, loss_f, beta, accum_p, y_true[...,0].clamp(0,1), **kwargs)
+        cls_loss = pu_loss(prior, loss_f, beta, accum_p, y_true[...,0].clamp(0,1), **kwargs).mean()
         rot_loss = 0
         trans_loss = 0
 
