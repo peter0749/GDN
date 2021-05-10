@@ -78,9 +78,9 @@ def parse_args():
     parser.add_argument("--nnode", type=int, default=3000, help="")
     parser.add_argument("--alpha", type=float, default=0.99, help="")
     parser.add_argument("--conf_lo", type=float, default=0.1, help="")
+    parser.add_argument("--disagree_th", type=float, default=30.0, help="")
     parser.add_argument("--noise_ratio", type=float, default=0.4, help="")
-    #parser.add_argument("--min_disagree", type=float, default=0.01, help="")
-    parser.add_argument("--input_noise", type=float, default=0.003, help="")
+    parser.add_argument("--input_noise", type=float, default=0.001, help="")
     args = parser.parse_args()
     return args
 
@@ -281,52 +281,51 @@ if __name__ == '__main__':
                 Y_new = Ys_new[mbinds].cuda() # (B, N, 16, 17, 8)
                 with torch.no_grad():
                     # Find consistent labels using Co-teaching++
-                    X_mirror = X.clone().detach()
-                    X_mirror[...,0] = -X_mirror[...,0]
-                    if np.random.rand() < 0.5:
-                        X, X_mirror = X_mirror, X
+                    positive_sample = (Y_new[...,0]>0)
                     base_model.load_state_dict(W1)
-                    pred1 = model(X + torch.randn(*X.size(), device=X.device) * args.input_noise)[0][...,0] # (B, N)
+                    pred1 = model(X + torch.randn(*X.size(), device=X.device) * args.input_noise)[0]
                     base_model.load_state_dict(W2)
-                    pred2 = model(X_mirror + torch.randn(*X.size(), device=X.device) * args.input_noise)[0][...,0] # (B, N)
-                    '''
-                    disagree = (pred1*pred2)<0
+                    pred2 = model(X + torch.randn(*X.size(), device=X.device) * args.input_noise)[0]
+                    R1 = pred1[...,1:10]
+                    R2 = pred2[...,1:10]
+                    disagree = torch.bmm(R1.reshape(-1, 3, 3), R2.view(-1, 3, 3).transpose(1, 2).contiguous())
+                    disagree[:,[0,1,2],[0,1,2]] -= 1.0 # R1 * R2^T - I
+                    disagree = torch.sum(disagree**2.0, dim=(1,2))**0.5
+                    disagree = (disagree.reshape(R1.size(0), R1.size(1)) / (2.0*float(np.sqrt(2)))).clamp(1e-8, 1.-1e-8)
+                    disagree = torch.asin(disagree) * 180. / float(np.pi)
+                    print("Disagree_m: %.4f"%(disagree.mean()))
+                    disagree = disagree > args.disagree_th
                     disagree_r = disagree.float().mean()
                     print("Disagree_r: %.4f"%disagree_r)
-                    if disagree_r < args.min_disagree:
-                        disagree = disagree | (torch.rand(*disagree.size(), device=disagree.device)<args.min_disagree)
-                    '''
                     # Find small-loss instances using Co-teaching (only the logit part)
-                    conf1 = F.binary_cross_entropy(torch.sigmoid(pred1), (Y_new[...,0]>0).float(), reduction='none') # (B, N)
-                    conf2 = F.binary_cross_entropy(torch.sigmoid(pred2), (Y_new[...,0]>0).float(), reduction='none') # (B, N)
-                    '''
-                    conf1_threshold = float(np.percentile(conf1[disagree].cpu().numpy(), 100.0 * (1.0 - args.noise_ratio)))
-                    conf2_threshold = float(np.percentile(conf2[disagree].cpu().numpy(), 100.0 * (1.0 - args.noise_ratio)))
-                    D1 = tuple(((conf1<conf1_threshold) & disagree).nonzero().transpose(0, 1).contiguous())
-                    D2 = tuple(((conf2<conf2_threshold) & disagree).nonzero().transpose(0, 1).contiguous())
-                    '''
-                    conf1_threshold = float(np.percentile(conf1.cpu().numpy(), 100.0 * (1.0 - args.noise_ratio)))
-                    conf2_threshold = float(np.percentile(conf2.cpu().numpy(), 100.0 * (1.0 - args.noise_ratio)))
-                    D1 = tuple(((conf1<conf1_threshold)).nonzero().transpose(0, 1).contiguous())
-                    D2 = tuple(((conf2<conf2_threshold)).nonzero().transpose(0, 1).contiguous())
+                    loss1 = F.binary_cross_entropy(torch.sigmoid(pred1[...,0]), positive_sample.float(), reduction='none') # (B, N)
+                    loss2 = F.binary_cross_entropy(torch.sigmoid(pred2[...,0]), positive_sample.float(), reduction='none') # (B, N)
+
+                    loss1_threshold = float(np.percentile(loss1[disagree].cpu().numpy(), 100.0 * (1.0 - args.noise_ratio)))
+                    loss2_threshold = float(np.percentile(loss2[disagree].cpu().numpy(), 100.0 * (1.0 - args.noise_ratio)))
+                    D1 = tuple(((loss1<loss1_threshold) & disagree).nonzero().transpose(0, 1).contiguous())
+                    D2 = tuple(((loss2<loss2_threshold) & disagree).nonzero().transpose(0, 1).contiguous())
 
                 # Update W1 using D2
-                base_model.load_state_dict(W1)
-                optimizer.zero_grad()
-                pred1 = model(X)[0] # (B, N, 13)
-                loss1, cls_loss1 = loss_function(pred1[D2], Y_new[D2])[:2]
-                loss1.backward()
-                optimizer.step()
-                W1 = copy.deepcopy(base_model.state_dict())
+                if len(D2) > 0 and len(D2[0]) > 0:
+                    base_model.load_state_dict(W1)
+                    optimizer.zero_grad()
+                    pred1 = model(X)[0] # (B, N, 13)
+                    loss1, cls_loss1 = loss_function(pred1[D2], Y_new[D2])[:2]
+                    loss1.backward()
+                    optimizer.step()
+                    W1 = copy.deepcopy(base_model.state_dict())
+                    print("cls_loss1: %.4f"%cls_loss1, flush=True)
                 # Update W2 using D1
-                base_model.load_state_dict(W2)
-                optimizer.zero_grad()
-                pred2 = model(X)[0] # (B, N, 13)
-                loss2, cls_loss2 = loss_function(pred2[D1], Y_new[D1])[:2]
-                loss2.backward()
-                optimizer.step()
-                W2 = copy.deepcopy(base_model.state_dict())
-                print("cls_loss1: %.4f cls_loss2: %.4f"%(cls_loss1, cls_loss2), flush=True)
+                if len(D1) > 0 and len(D1[0]) > 0:
+                    base_model.load_state_dict(W2)
+                    optimizer.zero_grad()
+                    pred2 = model(X)[0] # (B, N, 13)
+                    loss2, cls_loss2 = loss_function(pred2[D1], Y_new[D1])[:2]
+                    loss2.backward()
+                    optimizer.step()
+                    W2 = copy.deepcopy(base_model.state_dict())
+                    print("cls_loss2: %.4f"%cls_loss2, flush=True)
         base_model.load_state_dict(W2)
 
     # Start evaluate

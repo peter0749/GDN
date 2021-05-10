@@ -76,6 +76,7 @@ def loss_baseline(y_pred, y_true, cls_w, x_w, y_w, z_w, rot_w, **kwargs):
         y_loss     = torch.abs(y_p - y_gt).mean()
         z_loss     = torch.abs(z_p - z_gt).mean()
         dot_prod   = 1.0 - torch.bmm(rot_p, rot_gt.transpose(1, 2))
+        dot_prod   = torch.bmm(rot_p, rot_gt.transpose(1, 2)) - torch.eye(3, dtype=rot_p.dtype, device=rot_p.device).unsqueeze(0).expand(*rot_p.size())
         rot_loss   = (torch.sum(dot_prod*dot_prod, dim=(1, 2))**0.5).mean()
 
         return (
