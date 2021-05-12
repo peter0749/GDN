@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument("--kd_temp", type=float, default=4.0, help="Temperature of soft labels")
     parser.add_argument("--consist_r", type=float, default=1.0, help="Regularization term of consistency")
     parser.add_argument("--pu_loss", action="store_true", default=False)
-    parser.add_argument("--pu_loss_type", type=str, default="ramp", help="")
+    parser.add_argument("--pu_loss_type", type=str, default="sigmoid", help="")
     args = parser.parse_args()
     return args
 
