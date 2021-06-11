@@ -73,9 +73,12 @@ def parse_args():
     parser.add_argument("--nnode", type=int, default=3000, help="")
     parser.add_argument("--alpha", type=float, default=0.99, help="")
     #parser.add_argument("--NK", type=float, default=3.0, help="")
-    parser.add_argument("--conf_lo", type=float, default=0.2, help="")
+    #parser.add_argument("--conf_lo", type=float, default=0.2, help="")
     #parser.add_argument("--conf_hi", type=float, default=0.3, help="")
     #parser.add_argument("--conf_bw", type=float, default=0.8, help="")
+    parser.add_argument("--sample_width", type=float, default=0.05, help="")
+    parser.add_argument("--sample_height", type=float, default=0.03, help="")
+    parser.add_argument("--sample_thick", type=float, default=0.05, help="")
     args = parser.parse_args()
     return args
 
@@ -92,6 +95,10 @@ if __name__ == '__main__':
         config['val_data'] = args.task_data
         config['val_label'] = args.task_label
         config['return_embedding'] = True
+        # Enlarge "anchor assignment"
+        config['gripper_width'] = args.sample_width
+        config['hand_height'] = args.sample_height
+        config['thickness_side'] = args.sample_thick
 
     k_dpp = args.nrot
     n_clusters = args.npos
@@ -102,7 +109,7 @@ if __name__ == '__main__':
         os.makedirs(args.output_dir)
 
     representation, dataset, my_collate_fn, base_model, model, optimizer, loss_function = import_model_by_setting(config, mode='val')
-    assert args.ntrain < len(dataset)
+    #assert args.ntrain < len(dataset)
 
     dataloader = DataLoader(dataset,
                             batch_size=1,
@@ -217,22 +224,22 @@ if __name__ == '__main__':
             Yb = torch.cat((Yb, Ys_pos), 0) # + has label (nnode+|Y|, -1)
             Z = (1-args.alpha) * torch.mm(Wb, Yb).reshape(Yb.size(0), *Ys_shape[2:]) # (K, K) @ (K, ?) -> (K, ?)
             Z = Z[:args.nnode]
-            print("C_min C_max: %.4e %.4e"%(Z[...,0].min(), Z[...,0].max()))
+            print("C_min C_max: %.4e %.4e %s"%(Z[...,0].min(), Z[...,0].max(), str(Z.size())))
 
             d6 = Z[...,1:10].view(-1, 3, 3)[:,:,:2].reshape(-1, 6)
             Z[...,1:10] = cvtD6SO3(d6).reshape(Z.size(0), 9)
-            ignore = Z[...,0] < args.conf_lo
+            #ignore = Z[...,0] < args.conf_lo
             #Z[...,0] = ((Z[...,0] - args.conf_lo) / (args.conf_hi - args.conf_lo)).clamp(0, 1) * args.conf_bw + (1.0 - args.conf_bw) / 2.0
-            Z[ignore,0] = 0.0
-            Z[...,0].clamp_(0, 0.9)
+            #Z[ignore,0] = 0.0
+            #Z[...,0].clamp_(0.0, 1.0)
             Ys_new[b][Inds_sub[b]] = Z
             time_s += time.time() - s_time
             time_n += 1.
-        Ys_new[gt_mask] = Ys[gt_mask]
+        #Ys_new[gt_mask] = Ys[gt_mask]
     print("Avg. LP time: %.2f"%(time_s/time_n))
     print("Positive / batch (after): %.4f"%(torch.sum(Ys_new[...,0]>0) / Ys_new.size(0)))
     print("Computing collision...")
-    pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=10000, threshold=0.0, nms=False)
+    pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=10000, threshold=-np.inf, nms=False)
     # Dirty hack...
     config_bak = copy.deepcopy(representation.config)
     representation.config['hand_height'] = config['hand_height_eval']
