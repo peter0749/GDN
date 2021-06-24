@@ -38,6 +38,7 @@ from gdn.representation.s4g_focal_maml.activation import cvtD6SO3
 import importlib
 import copy
 from argparse import ArgumentParser
+from scipy.spatial import KDTree
 
 @nb.njit
 def rotDist(x, y):
@@ -76,9 +77,8 @@ def parse_args():
     #parser.add_argument("--conf_lo", type=float, default=0.2, help="")
     #parser.add_argument("--conf_hi", type=float, default=0.3, help="")
     #parser.add_argument("--conf_bw", type=float, default=0.8, help="")
-    parser.add_argument("--sample_width", type=float, default=0.05, help="")
-    parser.add_argument("--sample_height", type=float, default=0.03, help="")
-    parser.add_argument("--sample_thick", type=float, default=0.05, help="")
+    parser.add_argument("--sample_r", type=float, default=0.01, help="")
+    parser.add_argument("--roi_decay", type=float, default=100.0, help="")
     args = parser.parse_args()
     return args
 
@@ -95,10 +95,7 @@ if __name__ == '__main__':
         config['val_data'] = args.task_data
         config['val_label'] = args.task_label
         config['return_embedding'] = True
-        # Enlarge "anchor assignment"
-        config['gripper_width'] = args.sample_width
-        config['hand_height'] = args.sample_height
-        config['thickness_side'] = args.sample_thick
+        #config['input_points'] = 500000
 
     k_dpp = args.nrot
     n_clusters = args.npos
@@ -170,16 +167,32 @@ if __name__ == '__main__':
         if len(selected_grasps) > args.ngrasp:
             selected_grasps = selected_grasps[ np.random.choice(len(selected_grasps), args.ngrasp, replace=False)  ]
         pc_npy = pc[0].numpy().astype(np.float32)
+        kd_full = KDTree(pc_npy)
         Xs.append(pc)
         for pose in selected_grasps:
             gripper_inner_edge, gripper_outer1, gripper_outer2 = generate_gripper_edge(config['gripper_width'], config['hand_height'], pose, config['thickness_side'])
             enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
             if len(enclosed_pts)==0:
                 continue
+            inside_pts = pc_npy[enclosed_pts]
+            kd_inside = KDTree(inside_pts)
+            inner_indics = kd_full.query_ball_tree(kd_inside, r=args.sample_r, p=2)
+            new_enclosed_pts = []
+            new_scores = []
+            for i in range(pc_npy.shape[0]):
+                idx = inner_indics[i]
+                if len(idx) == 0:
+                    continue
+                d = np.min(np.linalg.norm(inside_pts[idx] - pc_npy[i:i+1], ord=2, keepdims=False, axis=1))
+                score = np.exp(-d * args.roi_decay)
+                new_enclosed_pts.append(i)
+                new_scores.append(score)
             (xyz, d9_rot) = representation.grasp_representation(pose,
                  pc_npy, # shape: (N, 3)
-                 enclosed_pts)
-            representation.update_feature_volume(Ys[b], enclosed_pts, xyz, d9_rot)
+                 new_enclosed_pts)
+            representation.update_feature_volume(Ys[b], new_enclosed_pts, xyz, d9_rot)
+            print(np.histogram(new_scores, bins=np.linspace(0, 1, 11)[:-1]))
+            Ys[b,new_enclosed_pts,0] = new_scores
     for b, (x, y) in enumerate(zip(Xs, Ys)):
         xyz = x[0].numpy().astype(np.float32)
         print(xyz.shape)
@@ -187,7 +200,7 @@ if __name__ == '__main__':
         pcd = open3d.geometry.PointCloud()
         pcd.points = open3d.utility.Vector3dVector(xyz)
         pcd.colors = open3d.utility.Vector3dVector(color.astype(np.float32))
-        open3d.io.write_point_cloud("./crop-based-pre-%s.ply"%IDs[b], pcd)
+        open3d.io.write_point_cloud("./distance-based-pre-%s.ply"%IDs[b], pcd)
     Xs = torch.cat(Xs).float()
     Ys = torch.from_numpy(Ys).float()
     Ys[...,0].clamp_(0, 1)
@@ -277,7 +290,7 @@ if __name__ == '__main__':
         pcd = open3d.geometry.PointCloud()
         pcd.points = open3d.utility.Vector3dVector(xyz)
         pcd.colors = open3d.utility.Vector3dVector(color.astype(np.float32))
-        open3d.io.write_point_cloud("./crop-based-post-%s.ply"%IDs[b], pcd)
+        open3d.io.write_point_cloud("./distance-based-post-%s.ply"%IDs[b], pcd)
     Ys_new = torch.from_numpy(Ys_new)
     pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=3000, threshold=0.0, nms=True)
     print("Write to files...")

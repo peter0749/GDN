@@ -38,6 +38,7 @@ from gdn.representation.s4g_focal_maml.activation import cvtD6SO3
 import importlib
 import copy
 from argparse import ArgumentParser
+from scipy.spatial import KDTree
 
 @nb.njit
 def rotDist(x, y):
@@ -79,6 +80,8 @@ def parse_args():
     parser.add_argument("--sample_width", type=float, default=0.05, help="")
     parser.add_argument("--sample_height", type=float, default=0.03, help="")
     parser.add_argument("--sample_thick", type=float, default=0.05, help="")
+    parser.add_argument("--kd_r", type=float, default=0.02, help="")
+    parser.add_argument("--flatness_gamma", type=float, default=2.0, help="")
     args = parser.parse_args()
     return args
 
@@ -95,6 +98,7 @@ if __name__ == '__main__':
         config['val_data'] = args.task_data
         config['val_label'] = args.task_label
         config['return_embedding'] = True
+        #config['input_points'] = 300000
         # Enlarge "anchor assignment"
         config['gripper_width'] = args.sample_width
         config['hand_height'] = args.sample_height
@@ -176,10 +180,28 @@ if __name__ == '__main__':
             enclosed_pts = crop_index(pc_npy, gripper_outer1, gripper_outer2)
             if len(enclosed_pts)==0:
                 continue
+            inside_pts = pc_npy[enclosed_pts]
+            kd_inside = KDTree(inside_pts)
+            inner_indics = kd_inside.query_ball_tree(kd_inside, r=args.kd_r, p=2)
+            new_scores = []
+            for i in range(inside_pts.shape[0]):
+                idx = inner_indics[i]
+                if len(idx) == 0:
+                    continue
+                cluster = inside_pts[idx]
+                if len(cluster) == 1:
+                    cluster = np.append(cluster, cluster, axis=0)
+                C = np.cov(cluster, rowvar=False)
+                eigval = np.linalg.eig(C)[0]
+                flatness = 1.0 - eigval[0] / eigval.sum() # range: [0, 2/3]
+                score = np.clip(flatness * 1.5, 0, 1) ** args.flatness_gamma
+                new_scores.append(score)
             (xyz, d9_rot) = representation.grasp_representation(pose,
                  pc_npy, # shape: (N, 3)
                  enclosed_pts)
             representation.update_feature_volume(Ys[b], enclosed_pts, xyz, d9_rot)
+            print(np.histogram(new_scores, bins=list(np.linspace(0, 1, 11)[:-1]) + [1.0,]))
+            Ys[b,enclosed_pts,0] = new_scores
     for b, (x, y) in enumerate(zip(Xs, Ys)):
         xyz = x[0].numpy().astype(np.float32)
         print(xyz.shape)
@@ -187,7 +209,7 @@ if __name__ == '__main__':
         pcd = open3d.geometry.PointCloud()
         pcd.points = open3d.utility.Vector3dVector(xyz)
         pcd.colors = open3d.utility.Vector3dVector(color.astype(np.float32))
-        open3d.io.write_point_cloud("./crop-based-pre-%s.ply"%IDs[b], pcd)
+        open3d.io.write_point_cloud("./curvature-based-pre-%s.ply"%IDs[b], pcd)
     Xs = torch.cat(Xs).float()
     Ys = torch.from_numpy(Ys).float()
     Ys[...,0].clamp_(0, 1)
@@ -277,7 +299,7 @@ if __name__ == '__main__':
         pcd = open3d.geometry.PointCloud()
         pcd.points = open3d.utility.Vector3dVector(xyz)
         pcd.colors = open3d.utility.Vector3dVector(color.astype(np.float32))
-        open3d.io.write_point_cloud("./crop-based-post-%s.ply"%IDs[b], pcd)
+        open3d.io.write_point_cloud("./curvature-based-post-%s.ply"%IDs[b], pcd)
     Ys_new = torch.from_numpy(Ys_new)
     pred_poses = representation.retrive_from_feature_volume_batch(Xs.numpy().astype(np.float32), Ys_new.numpy().astype(np.float32), n_output=3000, threshold=0.0, nms=True)
     print("Write to files...")
